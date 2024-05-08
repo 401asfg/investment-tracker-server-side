@@ -1,11 +1,11 @@
-package org.example.investmenttrackerserverside
+package com.michael.investementtrackerserverside
 
 import org.springframework.boot.autoconfigure.SpringBootApplication
 import org.springframework.boot.runApplication
 
 @SpringBootApplication
-class InvestmentTrackerServerSideApplication
+class InvestementTrackerServerSideApplication
 
 fun main(args: Array<String>) {
-	runApplication<InvestmentTrackerServerSideApplication>(*args)
+	runApplication<InvestementTrackerServerSideApplication>(*args)
 }

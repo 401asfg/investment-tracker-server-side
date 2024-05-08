@@ -7,7 +7,7 @@ plugins {
 	kotlin("plugin.spring") version "1.9.23"
 }
 
-group = "org.example"
+group = "com.michael"
 version = "0.0.1-SNAPSHOT"
 
 java {
@@ -24,6 +24,7 @@ dependencies {
 	implementation("com.fasterxml.jackson.module:jackson-module-kotlin")
 	implementation("org.jetbrains.kotlin:kotlin-reflect")
 	runtimeOnly("com.h2database:h2")
+	runtimeOnly("com.mysql:mysql-connector-j")
 	testImplementation("org.springframework.boot:spring-boot-starter-test")
 }
 

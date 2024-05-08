@@ -1,1 +1,1 @@
-rootProject.name = "investment-tracker-server-side"
+rootProject.name = "investement-tracker-server-side"
