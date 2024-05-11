@@ -177,6 +177,7 @@ class Database(val url: String, val user: String, val password: String) {
         while (resultSet.next()) {
             val dateTime = DateTime(resultSet.getString("date_time"))
             val principal = resultSet.getFloat("principal")
+            // FIXME: should query vehicles all at once, not one at a time
             val vehicle = queryVehicle(resultSet.getInt("vehicle_id"))
             val id = resultSet.getInt(ID_COLUMN)
 
