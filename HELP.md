@@ -1,7 +1,7 @@
 # Read Me First
 The following was discovered as part of building this project:
 
-* The original package name 'com.michael.investement-tracker-server-side' is invalid and this project uses 'com.michael.investementtrackerserverside' instead.
+* The original package name 'com.michael.investement-tracker-server-side' is invalid and this project uses 'com.michael.investmenttrackerserverside' instead.
 
 # Getting Started
 
