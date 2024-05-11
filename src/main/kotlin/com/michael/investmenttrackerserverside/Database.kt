@@ -1,5 +1,6 @@
 package com.michael.investmenttrackerserverside
 
+import DateTime
 import Investment
 import PastPrice
 import Portfolio
@@ -145,7 +146,8 @@ class Database(val url: String, val user: String, val password: String) {
      * @throws SQLException If inserting into the database fails
      * @throws SQLTimeoutException If the database insert couldn't be performed in the allotted time
      * @throws IllegalArgumentException If the given id doesn't correspond to any row in the portfolio table
-     * @throws ... FIXME: create exception type for invalid foreign keys
+     * @throws SQLIntegrityConstraintViolationException If any foreign key in the portfolio or its references are
+     * invalid
      */
     fun queryPortfolio(id: Int): Portfolio {
         val resultSet = executeQuery(PORTFOLIO_TABLE, id)
@@ -165,13 +167,24 @@ class Database(val url: String, val user: String, val password: String) {
      * @return The investments that have the given portfolioId
      * @throws SQLException If inserting into the database fails
      * @throws SQLTimeoutException If the database insert couldn't be performed in the allotted time
-     * @throws ... FIXME: create exception type for invalid foreign keys
+     * @throws SQLIntegrityConstraintViolationException If any foreign key in the portfolio or its references are
+     * invalid
      */
     private fun queryInvestments(portfolioId: Int): Set<Investment> {
         val resultSet = executeQuery(INVESTMENT_TABLE, "'portfolio_id' = $portfolioId")
+        val investments = mutableSetOf<Investment>()
 
-        // TODO: finish implementation
-        return setOf()
+        while (resultSet.next()) {
+            val dateTime = DateTime(resultSet.getString("date_time"))
+            val principal = resultSet.getFloat("principal")
+            val vehicle = queryVehicle(resultSet.getInt("vehicle_id"))
+            val id = resultSet.getInt(ID_COLUMN)
+
+            val investment = Investment(dateTime, principal, vehicle, id)
+            investments.add(investment)
+        }
+
+        return investments
     }
 
     /**
