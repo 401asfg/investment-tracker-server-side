@@ -5,7 +5,6 @@ import PastPrice
 import Portfolio
 import Vehicle
 import java.sql.*
-import javax.sound.sampled.Port
 
 // TODO: test
 // FIXME: more explicit errors
@@ -58,7 +57,7 @@ class Database(val url: String, val user: String, val password: String) {
         val usdToBaseCurrencyRateVehicleId = portfolio.usdToBaseCurrencyRateVehicle.id.toString()
 
         val values = setOf(id, usdToBaseCurrencyRateVehicleId)
-        portfolio.id = executeInsert(PORTFOLIO_TABLE, values)
+        portfolio.id = executePortfolioInsert(values)
 
         val investments = portfolio.investments
         insert(investments, portfolio.id!!)
@@ -76,7 +75,7 @@ class Database(val url: String, val user: String, val password: String) {
         val valueSets = mutableSetOf<Set<String>>()
         val portfolioIdString = portfolioId.toString()
 
-        investments.forEachIndexed { i, investment ->
+        investments.forEach { investment ->
             val dateTimestamp = investment.dateTime.toTimestamp()
             val principal = investment.principal.toString()
             val vehicleId = investment.vehicle.id.toString()
@@ -126,7 +125,7 @@ class Database(val url: String, val user: String, val password: String) {
         val valueSets = mutableSetOf<Set<String>>()
         val vehicleIdString = vehicleId.toString()
 
-        pastPrices.forEachIndexed { i, pastPrice ->
+        pastPrices.forEach { pastPrice ->
             val dateTimestamp = pastPrice.dateTime.toTimestamp()
             val price = pastPrice.price.toString()
             val isClosing = pastPrice.isClosing.toString()
@@ -198,18 +197,17 @@ class Database(val url: String, val user: String, val password: String) {
     }
 
     /**
-     * Executes an insert statement with the given values against the database
+     * Executes an insert statement with the given values against the portfolio table of the database
      *
-     * @param table The name of the table to insert into
      * @param values The values to insert
      * @return The id of the row inserted
      * @throws SQLException If inserting into the database fails
      * @throws SQLTimeoutException If the database insert couldn't be performed in the allotted time
      * @throws IllegalArgumentException If inserting the given values doesn't affect exactly one row
      */
-    private fun executeInsert(table: String, values: Set<String>): Int {
+    private fun executePortfolioInsert(values: Set<String>): Int {
         val valuesString = buildValuesSetString(values)
-        val ids = executeInsert(table, valuesString)
+        val ids = executeInsert(PORTFOLIO_TABLE, valuesString)
 
         if (ids.size != 1) throw IllegalArgumentException("Insert of single set of values affected ${ids.size} rows")
         return ids[0]
