@@ -6,9 +6,7 @@ import PastPrice
 import Portfolio
 import Vehicle
 import org.springframework.dao.DataAccessException
-import org.springframework.jdbc.core.BatchPreparedStatementSetter
-import org.springframework.jdbc.core.JdbcTemplate
-import org.springframework.jdbc.core.PreparedStatementCreator
+import org.springframework.jdbc.core.*
 import org.springframework.jdbc.support.GeneratedKeyHolder
 import java.sql.*
 import javax.sql.DataSource
@@ -16,6 +14,8 @@ import javax.sql.DataSource
 // TODO: test
 // FIXME: more explicit errors
 // FIXME: refactor duplicate code in insert methods
+
+class MissingVehicleException(msg: String? = null) : Exception(msg)
 
 /**
  * A database that can have models saved and loaded to it
@@ -58,7 +58,7 @@ class Database(val datasource: DataSource) {
      *
      * @param portfolio The portfolio to insert
      * @throws DataAccessException If the database was unable to perform the insertion
-     * @throws ... TODO: Create exception for missing vehicle id
+     * @throws MissingVehicleException If the portfolio's usd to base currency rate vehicle id is null
      */
     fun insert(portfolio: Portfolio) {
         // FIXME: make a new private insert for a single row insertion?
@@ -69,10 +69,11 @@ class Database(val datasource: DataSource) {
             1
         ) { ps: PreparedStatement, i: Int ->
             val usdToBaseCurrencyRateVehicleId = portfolio.usdToBaseCurrencyRateVehicle.id
-            // FIXME: implement exception
-//            if (usdToBaseCurrencyRateVehicleId === null) throw MissingVehicleException()
 
-            ps.setInt(1, usdToBaseCurrencyRateVehicleId!!)
+            if (usdToBaseCurrencyRateVehicleId === null)
+                throw MissingVehicleException("Portfolio's usd to base currency rate vehicle id is null")
+
+            ps.setInt(1, usdToBaseCurrencyRateVehicleId)
         }
 
         // FIXME: check that ids.size == 1
@@ -88,7 +89,7 @@ class Database(val datasource: DataSource) {
      * @param investments The investments to insert
      * @param portfolioId The id of the portfolio each investment is associated with
      * @throws DataAccessException If the database was unable to perform the insertion
-     * @throws ... TODO: Create exception for missing vehicle id
+     * @throws MissingVehicleException If any of the investments' vehicle ids are null
      */
     fun insert(investments: List<Investment>, portfolioId: Int) {
         val ids = insert(
@@ -100,10 +101,11 @@ class Database(val datasource: DataSource) {
             ps.setFloat(2, investments[i].principal)
 
             val vehicleId = investments[i].vehicle.id
-            // FIXME: implement exception
-//            if (vehicleId === null) throw MissingVehicleException()
 
-            ps.setInt(3, vehicleId!!)
+            if (vehicleId === null)
+                throw MissingVehicleException("An investment's vehicle id is null")
+
+            ps.setInt(3, vehicleId)
             ps.setInt(4, portfolioId)
         }
 
@@ -174,12 +176,12 @@ class Database(val datasource: DataSource) {
     ): List<Int> {
         val columnNamesString = columnNames.joinToString(SET_SEPARATOR)
         val valuesString = columnNames.joinToString(SET_SEPARATOR) { VALUE_PLACEHOLDER }
-        val insertSQL = "INSERT INTO $table ($columnNamesString) VALUES ($valuesString);"
+        val sql = "INSERT INTO $table ($columnNamesString) VALUES ($valuesString);"
 
         val keyHolder = GeneratedKeyHolder()
 
         jdbcTemplate.batchUpdate(
-            { con -> con.prepareStatement(insertSQL, PreparedStatement.RETURN_GENERATED_KEYS) },
+            { con -> con.prepareStatement(sql, PreparedStatement.RETURN_GENERATED_KEYS) },
             object: BatchPreparedStatementSetter {
                 override fun setValues(ps: PreparedStatement, i: Int) { setValues(ps, i) }
                 override fun getBatchSize(): Int = batchSize
@@ -188,6 +190,37 @@ class Database(val datasource: DataSource) {
         )
 
         return keyHolder.keyList.map { keyMap -> keyMap[ID_COLUMN] as Int }
+    }
+
+    /**
+     * Queries the past prices from the database
+     *
+     * @param vehicleId The vehicle id that all produced past prices must have
+     * @return All the past prices in the database that have the given vehicleId
+     * @throws DataAccessException If the database was unable to perform the insertion
+     */
+    fun queryPastPrices(vehicleId: Int): List<PastPrice>
+        = query(PAST_PRICE_TABLE, "'vehicle_id' = $vehicleId") { rs, _ ->
+            PastPrice(
+                DateTime(rs.getString("date_time")),
+                rs.getFloat("price"),
+                rs.getBoolean("is_closing"),
+                rs.getInt("id")
+            )
+        }
+
+    /**
+     * Queries rows from the given table, filtering with the given whereClause
+     *
+     * @param table The table to query from
+     * @param whereClause The where clause of the query, filters what rows are queries
+     * @param mapRow Maps the values of a row queried to an object that is produced
+     * @return A series of objects that contain the values of the rows queried
+     * @throws DataAccessException If the database was unable to perform the insertion
+     */
+    private fun <T> query(table: String, whereClause: String, mapRow: (ResultSet, Int) -> T): List<T> {
+        val querySQL = "SELECT * FROM $table WHERE $whereClause;"
+        return jdbcTemplate.query(querySQL, mapRow)
     }
 
     /**
