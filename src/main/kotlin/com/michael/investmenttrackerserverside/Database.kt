@@ -5,7 +5,13 @@ import Investment
 import PastPrice
 import Portfolio
 import Vehicle
+import org.springframework.dao.DataAccessException
+import org.springframework.jdbc.core.BatchPreparedStatementSetter
+import org.springframework.jdbc.core.JdbcTemplate
+import org.springframework.jdbc.core.PreparedStatementCreator
+import org.springframework.jdbc.support.GeneratedKeyHolder
 import java.sql.*
+import javax.sql.DataSource
 
 // TODO: test
 // FIXME: more explicit errors
@@ -14,12 +20,10 @@ import java.sql.*
 /**
  * A database that can have models saved and loaded to it
  *
- * @param url The url at which the database can be connected to
- * @param user The username used to connect to the database
- * @param password The password used to connect to the database
+ * @param datasource The connection to the database
  */
-class Database(val url: String, val user: String, val password: String) {
-    private val connection = DriverManager.getConnection(url, user, password)
+class Database(val datasource: DataSource) {
+    private val jdbcTemplate = JdbcTemplate(datasource)
 
     companion object {
         const val PAST_PRICE_TABLE = "past_prices"
@@ -27,7 +31,9 @@ class Database(val url: String, val user: String, val password: String) {
         const val INVESTMENT_TABLE = "investments"
         const val PORTFOLIO_TABLE = "portfolios"
 
-        const val ID_COLUMN = "id"
+        private const val ID_COLUMN = "id"
+        private const val SET_SEPARATOR = ", "
+        private const val VALUE_PLACEHOLDER = "?"
 
         /**
          * @param items The item set to build a string representation of
@@ -47,65 +53,79 @@ class Database(val url: String, val user: String, val password: String) {
     }
 
     /**
-     * Inserts the given portfolio to the database
+     * Inserts the given portfolio and its investments into the database
+     * Assigns the portfolio the unique id of the database row that represents it
      *
      * @param portfolio The portfolio to insert
-     * @throws SQLException If inserting into the database fails
-     * @throws SQLTimeoutException If the database insert couldn't be performed in the allotted time
+     * @throws DataAccessException If the database was unable to perform the insertion
+     * @throws ... TODO: Create exception for missing vehicle id
      */
     fun insert(portfolio: Portfolio) {
-        val id = portfolio.id.toString()
-        val usdToBaseCurrencyRateVehicleId = portfolio.usdToBaseCurrencyRateVehicle.id.toString()
+        // FIXME: make a new private insert for a single row insertion?
 
-        val values = setOf(id, usdToBaseCurrencyRateVehicleId)
-        portfolio.id = executePortfolioInsert(values)
+        val ids = insert(
+            PORTFOLIO_TABLE,
+            setOf("usd_to_base_currency_rate_vehicle_id"),
+            1
+        ) { ps: PreparedStatement, i: Int ->
+            val usdToBaseCurrencyRateVehicleId = portfolio.usdToBaseCurrencyRateVehicle.id
+            // FIXME: implement exception
+//            if (usdToBaseCurrencyRateVehicleId === null) throw MissingVehicleException()
 
-        val investments = portfolio.investments
-        insert(investments, portfolio.id!!)
+            ps.setInt(1, usdToBaseCurrencyRateVehicleId!!)
+        }
+
+        // FIXME: check that ids.size == 1
+
+        portfolio.id = ids[0]
+        insert(portfolio.investments, portfolio.id!!)
     }
 
     /**
-     * Inserts the given investments to the database
+     * Inserts the given investments into the database
+     * Assigns each investment the unique id of the database row that represents it
      *
      * @param investments The investments to insert
      * @param portfolioId The id of the portfolio each investment is associated with
-     * @throws SQLException If inserting into the database fails
-     * @throws SQLTimeoutException If the database insert couldn't be performed in the allotted time
+     * @throws DataAccessException If the database was unable to perform the insertion
+     * @throws ... TODO: Create exception for missing vehicle id
      */
-    fun insert(investments: Set<Investment>, portfolioId: Int) {
-        val valueSets = mutableSetOf<Set<String>>()
-        val portfolioIdString = portfolioId.toString()
+    fun insert(investments: List<Investment>, portfolioId: Int) {
+        val ids = insert(
+            INVESTMENT_TABLE,
+            setOf("date_time", "principal", "vehicle_id", "portfolio_id"),
+            investments.size
+        ) { ps: PreparedStatement, i: Int ->
+            ps.setString(1, investments[i].dateTime.toTimestamp())
+            ps.setFloat(2, investments[i].principal)
 
-        investments.forEach { investment ->
-            val dateTimestamp = investment.dateTime.toTimestamp()
-            val principal = investment.principal.toString()
-            val vehicleId = investment.vehicle.id.toString()
+            val vehicleId = investments[i].vehicle.id
+            // FIXME: implement exception
+//            if (vehicleId === null) throw MissingVehicleException()
 
-            valueSets.add(setOf(dateTimestamp, principal, vehicleId, portfolioIdString))
+            ps.setInt(3, vehicleId!!)
+            ps.setInt(4, portfolioId)
         }
 
-        val ids = executeInsert(INVESTMENT_TABLE, valueSets)
         investments.forEachIndexed { i, investment -> investment.id = ids[i] }
     }
 
     /**
-     * Inserts the given vehicles to the database
+     * Inserts the given vehicles and their past prices into the database
+     * Assigns each vehicle the unique id of the database row that represents it
      *
      * @param vehicles The vehicles to insert
-     * @throws SQLException If inserting into the database fails
-     * @throws SQLTimeoutException If the database insert couldn't be performed in the allotted time
+     * @throws DataAccessException If the database was unable to perform the insertion
      */
-    fun insert(vehicles: Set<Vehicle>) {
-        val valueSets = mutableSetOf<Set<String>>()
-
-        vehicles.forEach { vehicle ->
-            val symbol = vehicle.symbol
-            val name = vehicle.name
-
-            valueSets.add(setOf(symbol, name))
+    fun insert(vehicles: List<Vehicle>) {
+        val ids = insert(
+            VEHICLE_TABLE,
+            setOf("symbol", "name"),
+            vehicles.size
+        ) { ps: PreparedStatement, i: Int ->
+            ps.setString(1, vehicles[i].symbol)
+            ps.setString(2, vehicles[i].name)
         }
-
-        val ids = executeInsert(VEHICLE_TABLE, valueSets)
 
         vehicles.forEachIndexed { i, vehicle ->
             vehicle.id = ids[i]
@@ -114,28 +134,60 @@ class Database(val url: String, val user: String, val password: String) {
     }
 
     /**
-     * Inserts the given past prices to the database
+     * Inserts the given pastPrices into the database
+     * Assigns each past price the unique id of the database row that represents it
      *
      * @param pastPrices The past prices to insert
      * @param vehicleId The id of the vehicle each past price is associated with
-     * @throws SQLException If inserting into the database fails
-     * @throws SQLTimeoutException If the database insert couldn't be performed in the allotted time
-     * @throws IllegalArgumentException If pastPrices and vehicleIds don't have the same size
+     * @throws DataAccessException If the database was unable to perform the insertion
      */
-    fun insert(pastPrices: Set<PastPrice>, vehicleId: Int) {
-        val valueSets = mutableSetOf<Set<String>>()
-        val vehicleIdString = vehicleId.toString()
-
-        pastPrices.forEach { pastPrice ->
-            val dateTimestamp = pastPrice.dateTime.toTimestamp()
-            val price = pastPrice.price.toString()
-            val isClosing = pastPrice.isClosing.toString()
-
-            valueSets.add(setOf(dateTimestamp, price, isClosing, vehicleIdString))
+    fun insert(pastPrices: List<PastPrice>, vehicleId: Int) {
+        val ids = insert(
+            PAST_PRICE_TABLE,
+            setOf("date_time", "price", "is_closing", "vehicle_id"),
+            pastPrices.size
+        ) { ps: PreparedStatement, i: Int ->
+            ps.setString(1, pastPrices[i].dateTime.toTimestamp())
+            ps.setFloat(2, pastPrices[i].price)
+            ps.setBoolean(3, pastPrices[i].isClosing)
+            ps.setInt(4, vehicleId)
         }
 
-        val ids = executeInsert(PAST_PRICE_TABLE, valueSets)
         pastPrices.forEachIndexed { i, pastPrice -> pastPrice.id = ids[i] }
+    }
+
+    /**
+     * Inserts into the given database's table
+     *
+     * @param table The table to insert into
+     * @param columnNames The names of the columns to fill out
+     * @param batchSize The number of rows to be inserted
+     * @param setValues Specifies the value the assigned to each of the columns, for each inserted row
+     * @return The unique ids of the inserted rows
+     * @throws DataAccessException If the database was unable to perform the insertion
+     */
+    private fun insert(
+        table: String,
+        columnNames: Set<String>,
+        batchSize: Int,
+        setValues: (PreparedStatement, Int) -> Unit
+    ): List<Int> {
+        val columnNamesString = columnNames.joinToString(SET_SEPARATOR)
+        val valuesString = columnNames.joinToString(SET_SEPARATOR) { VALUE_PLACEHOLDER }
+        val insertSQL = "INSERT INTO $table ($columnNamesString) VALUES ($valuesString);"
+
+        val keyHolder = GeneratedKeyHolder()
+
+        jdbcTemplate.batchUpdate(
+            { con -> con.prepareStatement(insertSQL, PreparedStatement.RETURN_GENERATED_KEYS) },
+            object: BatchPreparedStatementSetter {
+                override fun setValues(ps: PreparedStatement, i: Int) { setValues(ps, i) }
+                override fun getBatchSize(): Int = batchSize
+            },
+            keyHolder
+        )
+
+        return keyHolder.keyList.map { keyMap -> keyMap[ID_COLUMN] as Int }
     }
 
     /**

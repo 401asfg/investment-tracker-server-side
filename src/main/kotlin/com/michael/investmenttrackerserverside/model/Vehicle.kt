@@ -9,6 +9,6 @@
 data class Vehicle(
     val symbol: String,
     val name: String,
-    val pastPrices: Set<PastPrice>,
+    val pastPrices: List<PastPrice>,
     var id: Int? = null
 )
