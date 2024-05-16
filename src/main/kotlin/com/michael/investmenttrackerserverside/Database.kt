@@ -226,10 +226,17 @@ class Database(val datasource: DataSource) {
     /**
      * TODO: write documentation
      */
-    private fun queryInvestments(
-        portfolioId: Int,
-        interval: Interval
-    ): Set<Investment> = setOf()    // TODO: implement stub
+    private fun queryPortfolioInvestments(portfolioId: Int, interval: Interval): Set<Investment> = setOf()    // TODO: implement stub
+
+    /**
+     * TODO: write documentation
+     */
+    private fun queryPortfolioVehicles(portfolioId: Int, interval: Interval): Set<Vehicle> = setOf()   // TODO: implement stub
+
+    /**
+     * TODO: write documentation
+     */
+    private fun queryPortfolioPastPrices(portfolioId: Int, interval: Interval): Set<PastPrice> = setOf() // TODO: implement stub
 
     /**
      * TODO: write documentation
@@ -239,20 +246,10 @@ class Database(val datasource: DataSource) {
     /**
      * TODO: write documentation
      */
-    fun queryVehicle(id: Int, interval: Interval): Vehicle
-        = Vehicle("", "", listOf()) // TODO: implement stub
+    fun queryVehicle(id: Int, interval: Interval): Vehicle = Vehicle("", "", listOf()) // TODO: implement stub
 
     /**
      * TODO: write documentation
      */
-    private fun queryVehicles(portfolioId: Int, interval: Interval): Set<Vehicle>
-        = setOf()   // TODO: implement stub
-
-    /**
-     * TODO: write documentation
-     */
-    private fun queryPastPrices(
-        portfolioId: Int,
-        interval: Interval
-    ): Set<PastPrice> = setOf() // TODO: implement stub
+    private fun queryVehiclePastPrices(vehicleId: Int, interval: Interval): Set<PastPrice> = setOf() // TODO: implement stub
 }
