@@ -69,41 +69,56 @@ class Database(val datasource: DataSource) {
             = { con -> con.prepareStatement(sql) }
 
         /**
-         * Sets the portfolio id in the given preparedStatement with the value of the given portfolioId
+         * Sets an id in the given preparedStatement with the value of the given id
          *
-         * @param preparedStatement The statement to set the portfolio id of
-         * @param portfolioId The value to set the portfolio id in the statement to
-         * @throws SQLException If the statement contains no portfolio id
+         * @param preparedStatement The statement to set the id of
+         * @param id The value to set the id in the statement to
+         * @throws SQLException If the statement contains no id
          */
-        private fun setPortfolioId(preparedStatement: PreparedStatement, portfolioId: Int) {
-            preparedStatement.setInt(1, portfolioId)
+        private fun setId(preparedStatement: PreparedStatement, id: Int) {
+            preparedStatement.setInt(1, id)
         }
 
         /**
-         * @param portfolioId The portfolio id to set in a prepared statement
-         * @return A function that sets the portfolio id in a prepared statement
+         * @param id The id to set in a prepared statement
+         * @return A function that sets the id in a prepared statement
          */
-        private fun setPortfolioIdClosure(portfolioId: Int): (PreparedStatement) -> Unit
-            = { ps -> setPortfolioId(ps, portfolioId) }
+        private fun setIdClosure(id: Int): (PreparedStatement) -> Unit = { ps -> setId(ps, id) }
 
         /**
-         * @param portfolioId The portfolio id to set in a prepared statement
+         * @param id The id to set in a prepared statement
          * @param interval The interval to set in a prepared statement
-         * @return A function that sets the portfolio id in a prepared statement
+         * @return A function that sets the id and interval fields in a prepared statement
          */
-        private fun setPastPricesClosure(portfolioId: Int, interval: Interval): (PreparedStatement) -> Unit
+        private fun setPastPricesClosure(id: Int, interval: Interval): (PreparedStatement) -> Unit
             = { ps ->
                 val fromDate = interval.from.toTimestamp()
                 val toDate = interval.to.toTimestamp()
                 val requiredTimestampEnd = interval.requiredTimestampEnd
 
-                setPortfolioId(ps, portfolioId)
+                setId(ps, id)
                 ps.setString(2, fromDate)
                 ps.setString(3, toDate)
                 ps.setString(4, requiredTimestampEnd)
             }
 
         // FIXME: make sure build fns should take in maps and not just what they need
+
+        /**
+         * @param resultSet The data to build a portfolio from
+         * @param investments The portfolio's investments
+         * @param usdToBaseCurrencyRateVehicle The portfolio's usd to base currency rate vehicle
+         * @return A portfolio from the given resultSet data
+         * @throws SQLException If the given resultSet didn't contain some of the data needed to build a portfolio
+         */
+        private fun buildPortfolio(
+            resultSet: ResultSet,
+            investments: List<Investment>,
+            usdToBaseCurrencyRateVehicle: Vehicle
+        ): Portfolio {
+            val id = resultSet.getInt("id")
+            return Portfolio(investments, usdToBaseCurrencyRateVehicle, id)
+        }
 
         /**
          * @param resultSet The data to build a vehicle from
@@ -147,6 +162,38 @@ class Database(val datasource: DataSource) {
             val id = resultSet.getInt("id")
 
             return PastPrice(dateTime, price, isClosing, vehicleId, id)
+        }
+
+        /**
+         * @param resultSet The data to build a list item from
+         * @param build A function that builds each item in the produced list
+         * @return A list of items, each built using the data from the given resultSet and built by the given build
+         * function
+         */
+        private fun <T> buildList(resultSet: ResultSet, build: () -> T): List<T> {
+            val list = mutableListOf<T>()
+
+            while (resultSet.next()) {
+                val item = build()
+                list.add(item)
+            }
+
+            return list
+        }
+
+        /**
+         * @param resultSet The data to build a map item from
+         * @param updateMap Updates the map for each set of data in the given resultSet
+         * @return A map with ids as keys corresponding to values; The map is updated for each set of data in the given
+         * resultSet
+         */
+        private fun <T> buildIdMap(
+            resultSet: ResultSet,
+            updateMap: (MutableMap<Int, T>) -> Unit
+        ): Map<Int, T> {
+            val map = mutableMapOf<Int, T>()
+            while (resultSet.next()) updateMap(map)
+            return map
         }
     }
 
@@ -319,7 +366,7 @@ class Database(val datasource: DataSource) {
      * @throws SQLException If the query didn't contain the correct data to create the portfolio
      * @throws MissingVehicleException If all the queried portfolio didn't have all its associated vehicles in the
      * database
-     * @throws MissingPortfolioException If there is no portfolio associated with the given id
+     * @throws MissingPortfolioException If all the queried portfolio couldn't be found in the database
      */
     fun queryPortfolio(id: Int, interval: Interval): Portfolio {
         val sql = """
@@ -328,12 +375,20 @@ class Database(val datasource: DataSource) {
             WHERE id = ?
         """.trimIndent()
 
-        if (query(sql, null, setPortfolioIdClosure(id)) { rs -> rs.getInt("id") } === null)
-            throw MissingPortfolioException("The portfolio with the id: $id could not be found")
-
         val investments = queryPortfolioInvestments(id, interval)
         val usdToBaseCurrencyRateVehicle = queryPortfolioUsdToBaseCurrencyRateVehicle(id, interval)
-        return Portfolio(investments, usdToBaseCurrencyRateVehicle, id)
+
+        return query(
+            sql,
+            id,
+            { rs -> buildPortfolio(rs, investments, usdToBaseCurrencyRateVehicle) },
+            {
+                throw MissingPortfolioException("Query for a portfolio with the id: $id didn't produce any results")
+            },
+            {
+                throw MissingPortfolioException("Query for a portfolio with the id: $id produced more than one entry")
+            }
+        )
     }
 
     /**
@@ -363,20 +418,15 @@ class Database(val datasource: DataSource) {
 
         val investmentsVehicles = queryPortfolioInvestmentsVehicles(portfolioId, interval)
 
-        return query(sql, listOf(), setPortfolioIdClosure(portfolioId)) { rs ->
-            val investments = mutableListOf<Investment>()
-
-            while (rs.next()) {
+        return query(sql, listOf(), setIdClosure(portfolioId)) { rs ->
+            buildList(rs) {
                 val vehicleId = rs.getInt("vehicle_id")
 
                 val vehicle = investmentsVehicles[vehicleId]
                     ?: throw MissingVehicleException("Query for investment couldn't find a corresponding vehicle")
 
-                val investment = buildInvestment(rs, vehicle)
-                investments.add(investment)
+                buildInvestment(rs, vehicle)
             }
-
-            investments
         }
     }
 
@@ -403,24 +453,45 @@ class Database(val datasource: DataSource) {
 
         val pastPrices = queryPortfolioUsdToBaseCurrencyRateVehiclePastPrices(portfolioId, interval)
 
-        // FIXME: move single and multiple result setter bodies into their own static, generic methods
-
-        return query(sql, null, setPortfolioIdClosure(portfolioId)) { rs ->
-            if (!rs.next())
+        return query(
+            sql,
+            portfolioId,
+            { rs -> buildVehicle(rs, pastPrices) },
+            {
                 throw MissingVehicleException(
                     "Query for a portfolio's usd to base currency rate vehicle didn't produce any results"
                 )
-
-            val vehicle = buildVehicle(rs, pastPrices)
-
-            if (rs.next())
+            },
+            {
                 throw MissingVehicleException(
                     "Query for a portfolio's usd to base currency rate vehicle produced more than one result"
                 )
-
-            vehicle
-        }!!
+            }
+        )
     }
+
+    /**
+     * @param sql The sql query to execute
+     * @param id The id to query for
+     * @param build The function that builds the result from the query
+     * @param throwNoResultsException Throws an exception if no results are found
+     * @param throwMultipleResultsException Throws an exception if multiple results are found
+     * @return The result of the given sql query
+     * @throws DataAccessException If the database was unable to perform the query
+     * @throws SQLException If the query didn't contain the correct data to create the result
+     */
+    private fun <T> query(
+        sql: String,
+        id: Int,
+        build: (ResultSet) -> T,
+        throwNoResultsException: () -> Unit,
+        throwMultipleResultsException: () -> Unit
+    ): T = query(sql, null, setIdClosure(id)) { rs ->
+        if (!rs.next()) throwNoResultsException()
+        val result = build(rs)
+        if (rs.next()) throwMultipleResultsException()
+        result
+    }!!
 
     /**
      * @param portfolioId A unique identifier of a portfolio; only vehicles associated with this portfolio, through
@@ -448,19 +519,15 @@ class Database(val datasource: DataSource) {
 
         val vehiclesPastPrices = queryPortfolioInvestmentsVehiclesPastPrices(portfolioId, interval)
 
-        return query(sql, mapOf(), setPortfolioIdClosure(portfolioId)) { rs ->
-            val vehicles = mutableMapOf<Int, Vehicle>()
-
-            while (rs.next()) {
+        return query(sql, mapOf(), setIdClosure(portfolioId)) { rs ->
+            buildIdMap(rs) { map ->
                 val vehicleId = rs.getInt("vehicle_id")
                 val pastPrices = vehiclesPastPrices[vehicleId] ?: listOf()
                 val vehicle = buildVehicle(rs, pastPrices)
 
                 val investmentId = rs.getInt("investment_id")
-                vehicles[investmentId] = vehicle
+                map[investmentId] = vehicle
             }
-
-            vehicles
         }
     }
 
@@ -473,7 +540,10 @@ class Database(val datasource: DataSource) {
      * @throws DataAccessException If the database was unable to perform the query
      * @throws SQLException If the query didn't contain the correct data to create past prices
      */
-    private fun queryPortfolioUsdToBaseCurrencyRateVehiclePastPrices(portfolioId: Int, interval: Interval): List<PastPrice> {
+    private fun queryPortfolioUsdToBaseCurrencyRateVehiclePastPrices(
+        portfolioId: Int,
+        interval: Interval
+    ): List<PastPrice> {
         val sql = """
             SELECT
                 pp.id AS id,
@@ -495,14 +565,7 @@ class Database(val datasource: DataSource) {
         // FIXME: verify the pp.date_time LIKE %? is correct
 
         return query(sql, listOf(), setPastPricesClosure(portfolioId, interval)) { rs ->
-            val pastPrices = mutableListOf<PastPrice>()
-
-            while (rs.next()) {
-                val pastPrice = buildPastPrice(rs)
-                pastPrices.add(pastPrice)
-            }
-
-            pastPrices
+            buildList(rs) { buildPastPrice(rs) }
         }
     }
 
@@ -543,29 +606,64 @@ class Database(val datasource: DataSource) {
         // FIXME: verify the pp.date_time LIKE %? is correct
 
         return query(sql, mapOf(), setPastPricesClosure(portfolioId, interval)) { rs ->
-            val vehiclesPastPrices = mutableMapOf<Int, MutableList<PastPrice>>()
-
-            while (rs.next()) {
+            buildIdMap<MutableList<PastPrice>>(rs) { map ->
                 val pastPrice = buildPastPrice(rs)
                 val vehicleId = pastPrice.vehicleId
 
-                if (!vehiclesPastPrices.containsKey(vehicleId)) vehiclesPastPrices[vehicleId] = mutableListOf()
-                vehiclesPastPrices[vehicleId]!!.add(pastPrice)
+                if (!map.containsKey(vehicleId)) map[vehicleId] = mutableListOf()
+                map[vehicleId]!!.add(pastPrice)
             }
-
-            vehiclesPastPrices
         }
     }
 
     /**
-     * TODO: write documentation
+     * @param query The query by which to search for vehicles to produce
+     * @return All the vehicles that contain the given query in their symbol or name
+     * @throws DataAccessException If the database was unable to perform the query
+     * @throws SQLException If the query didn't contain the correct data to create vehicles
      */
-    fun queryVehicles(query: String): List<Vehicle> = listOf()    // TODO: implement stub
+    fun queryVehicles(query: String): List<Vehicle> {
+        val sql = """
+            SELECT id, symbol, name
+            FROM $VEHICLE_TABLE
+            WHERE
+                symbol LIKE %?%
+                OR name LIKE %?%
+            """.trimIndent()
+
+        return query(
+            sql,
+            listOf(),
+            { ps ->
+                ps.setString(1, query)
+                ps.setString(2, query)
+            },
+            { rs -> buildList(rs) { buildVehicle(rs, listOf()) } }
+        )
+    }
 
     /**
-     * TODO: write documentation
+     * @param vehicleId A unique identifier of a vehicle; only past prices associated with this vehicle are queried
+     * @param interval Only past prices that are included in this interval are queried
+     * @return All the past prices associated with the given vehicleId; only includes the past prices that are included
+     * in the given interval
+     * @throws DataAccessException If the database was unable to perform the query
+     * @throws SQLException If the query didn't contain the correct data to create past prices
      */
-    fun queryPastPrices(vehicleId: Int, interval: Interval): List<PastPrice> = listOf() // TODO: implement stub
+    fun queryPastPrices(vehicleId: Int, interval: Interval): List<PastPrice> {
+        val sql = """
+            SELECT id, date_time, price, is_closing, vehicle_id
+            FROM $PAST_PRICE_TABLE
+            WHERE
+                vehicle_id = ?
+                AND DATETIME(date_time) BETWEEN DATETIME(?) AND DATETIME(?)
+                AND date_time LIKE %?
+        """.trimIndent()
+
+        return query(sql, listOf(), setPastPricesClosure(vehicleId, interval)) { rs ->
+            buildList(rs) { buildPastPrice(rs) }
+        }
+    }
 
     /**
      * Perform the given sql query
@@ -581,6 +679,6 @@ class Database(val datasource: DataSource) {
         sql: String,
         default: T,
         setValuesClosure: (PreparedStatement) -> Unit,
-        resultSetExtractor: (rs: ResultSet) -> Vehicle
+        resultSetExtractor: (rs: ResultSet) -> T
     ): T = jdbcTemplate.query(prepareStatementClosure(sql), setValuesClosure, resultSetExtractor) ?: default
 }
