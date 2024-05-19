@@ -26,28 +26,29 @@ data class DateTime(val year: Int, val month: Int, val day: Int, val hour: Int, 
 }
 
 /**
- * A smallest unit of time to which all the points in time in an interval are rounded
- */
-enum class TimeGranularity {
-    YEAR,
-    MONTH,
-    DAY,
-    HOUR,
-    MINUTE
-}
-
-/**
  * An interval of time that includes the given from and to date times, and only includes times that round to the given
  * granularity
  *
  * @param from The earliest date time that is included in this interval
  * @param to The latest date time that is included in this interval
- * @param granularity The unit of time that a date time must be rounded to, to be included in this interval
+ * @param timeGranularity The unit of time that a date time must be rounded to, to be included in this interval
+ * @throws IllegalArgumentException If the given granularity isn't a valid unit of time
  */
-data class Interval(val from: DateTime, val to: DateTime, val granularity: TimeGranularity = TimeGranularity.MINUTE) {
-    /**
-     * @param dateTime The date time to check if its considered included in this interval
-     * @return True if the given date time is included in this interval, otherwise false
-     */
-    fun included(dateTime: DateTime): Boolean = false   // TODO: implement stub
+class Interval(val from: DateTime, val to: DateTime, timeGranularity: String = YEAR_GRANULARITY) {
+    companion object {
+        const val YEAR_GRANULARITY = "year"
+        const val MONTH_GRANULARITY = "month"
+        const val DAY_GRANULARITY = "day"
+        const val HOUR_GRANULARITY = "hour"
+        const val MINUTE_GRANULARITY = "minute"
+    }
+
+    val requiredTimestampEnd = when(timeGranularity) {
+        YEAR_GRANULARITY -> "-1-1 00:00:00"
+        MONTH_GRANULARITY -> "-1 00:00:00"
+        DAY_GRANULARITY -> " 00:00:00"
+        HOUR_GRANULARITY -> ":00:00"
+        MINUTE_GRANULARITY -> ":00"
+        else -> throw IllegalArgumentException("Interval received invalid granularity: $timeGranularity")
+    }
 }
