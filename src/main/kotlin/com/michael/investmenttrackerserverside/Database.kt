@@ -83,14 +83,17 @@ class Database(val datasource: DataSource) {
          * @param id The id to set in a prepared statement
          * @return A function that sets the id in a prepared statement
          */
-        private fun setIdClosure(id: Int): (PreparedStatement) -> Unit = { ps -> setId(ps, id) }
+        private fun setIdInPreparedStatement(id: Int): (PreparedStatement) -> Unit = { ps -> setId(ps, id) }
 
         /**
          * @param id The id to set in a prepared statement
          * @param interval The interval to set in a prepared statement
          * @return A function that sets the id and interval fields in a prepared statement
          */
-        private fun setPastPricesClosure(id: Int, interval: Interval): (PreparedStatement) -> Unit
+        private fun setPastPriceParametersInPreparedStatement(
+            id: Int,
+            interval: Interval
+        ): (PreparedStatement) -> Unit
             = { ps ->
                 val fromDate = interval.from.toTimestamp()
                 val toDate = interval.to.toTimestamp()
@@ -356,6 +359,8 @@ class Database(val datasource: DataSource) {
         return keyHolder.key as Int
     }
 
+    // FIXME: refactor sql statements to use single point of control?
+
     /**
      * @param id The unique identifier of the portfolio
      * @param interval Only past prices, associated with the vehicles of the queried portfolio, that are included in
@@ -418,7 +423,7 @@ class Database(val datasource: DataSource) {
 
         val investmentsVehicles = queryPortfolioInvestmentsVehicles(portfolioId, interval)
 
-        return query(sql, listOf(), setIdClosure(portfolioId)) { rs ->
+        return query(sql, listOf(), setIdInPreparedStatement(portfolioId)) { rs ->
             buildList(rs) {
                 val vehicleId = rs.getInt("vehicle_id")
 
@@ -486,7 +491,7 @@ class Database(val datasource: DataSource) {
         build: (ResultSet) -> T,
         throwNoResultsException: () -> Unit,
         throwMultipleResultsException: () -> Unit
-    ): T = query(sql, null, setIdClosure(id)) { rs ->
+    ): T = query(sql, null, setIdInPreparedStatement(id)) { rs ->
         if (!rs.next()) throwNoResultsException()
         val result = build(rs)
         if (rs.next()) throwMultipleResultsException()
@@ -519,7 +524,7 @@ class Database(val datasource: DataSource) {
 
         val vehiclesPastPrices = queryPortfolioInvestmentsVehiclesPastPrices(portfolioId, interval)
 
-        return query(sql, mapOf(), setIdClosure(portfolioId)) { rs ->
+        return query(sql, mapOf(), setIdInPreparedStatement(portfolioId)) { rs ->
             buildIdMap(rs) { map ->
                 val vehicleId = rs.getInt("vehicle_id")
                 val pastPrices = vehiclesPastPrices[vehicleId] ?: listOf()
@@ -564,7 +569,7 @@ class Database(val datasource: DataSource) {
 
         // FIXME: verify the pp.date_time LIKE %? is correct
 
-        return query(sql, listOf(), setPastPricesClosure(portfolioId, interval)) { rs ->
+        return query(sql, listOf(), setPastPriceParametersInPreparedStatement(portfolioId, interval)) { rs ->
             buildList(rs) { buildPastPrice(rs) }
         }
     }
@@ -605,7 +610,7 @@ class Database(val datasource: DataSource) {
 
         // FIXME: verify the pp.date_time LIKE %? is correct
 
-        return query(sql, mapOf(), setPastPricesClosure(portfolioId, interval)) { rs ->
+        return query(sql, mapOf(), setPastPriceParametersInPreparedStatement(portfolioId, interval)) { rs ->
             buildIdMap<MutableList<PastPrice>>(rs) { map ->
                 val pastPrice = buildPastPrice(rs)
                 val vehicleId = pastPrice.vehicleId
@@ -660,7 +665,7 @@ class Database(val datasource: DataSource) {
                 AND date_time LIKE %?
         """.trimIndent()
 
-        return query(sql, listOf(), setPastPricesClosure(vehicleId, interval)) { rs ->
+        return query(sql, listOf(), setPastPriceParametersInPreparedStatement(vehicleId, interval)) { rs ->
             buildList(rs) { buildPastPrice(rs) }
         }
     }
