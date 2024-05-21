@@ -15,6 +15,7 @@ import javax.sql.DataSource
 // TODO: test
 // FIXME: more explicit errors
 // FIXME: refactor duplicate code in insert methods
+// FIXME: verify queries using "LIKE" are correct
 
 /**
  * Thrown when a vehicle that should be in the database is not in the database
@@ -35,10 +36,48 @@ class Database(val datasource: DataSource) {
     private val jdbcTemplate = JdbcTemplate(datasource)
 
     companion object {
+        /* TABLE NAMES */
         const val PAST_PRICE_TABLE = "past_prices"
         const val VEHICLE_TABLE = "vehicles"
         const val INVESTMENT_TABLE = "investments"
         const val PORTFOLIO_TABLE = "portfolios"
+
+        /* PORTFOLIO QUERY CLAUSES */
+        private const val PORTFOLIO_ID_PARAM_WHERE_CLAUSE = "WHERE p.id = ?"
+
+        private const val PORTFOLIO_SELECT_STATEMENT =
+            "SELECT p.id FROM $PORTFOLIO_TABLE AS p $PORTFOLIO_ID_PARAM_WHERE_CLAUSE"
+
+        /* INVESTMENT QUERY CLAUSES */
+        private const val INVESTMENT_TO_PORTFOLIO_JOIN_CLAUSE =
+            "INNER JOIN $PORTFOLIO_TABLE AS p ON i.portfolio_id = p.id"
+
+        private const val INVESTMENT_SELECT_STATEMENT =
+            "SELECT i.id, i.date_time, i.principal, i.vehicle_id, i.portfolio_id FROM $INVESTMENT_TABLE AS i " +
+            "$INVESTMENT_TO_PORTFOLIO_JOIN_CLAUSE $PORTFOLIO_ID_PARAM_WHERE_CLAUSE"
+
+        /* VEHICLE QUERY CLAUSES */
+        private const val VEHICLE_SELECT_CLAUSE = "SELECT v.id, v.symbol, v.name"
+        private const val VEHICLE_FROM_CLAUSE = "FROM $VEHICLE_TABLE AS v"
+        private const val VEHICLE_SELECT_FROM_CLAUSE = "$VEHICLE_SELECT_CLAUSE $VEHICLE_FROM_CLAUSE"
+
+        private const val VEHICLE_TO_INVESTMENT_TO_PORTFOLIO_JOIN_CLAUSE =
+            "INNER JOIN $INVESTMENT_TABLE AS i ON v.id = i.vehicle_id $INVESTMENT_TO_PORTFOLIO_JOIN_CLAUSE"
+
+        private const val USD_TO_BASE_CURRENCY_RATE_VEHICLE_TO_PORTFOLIO_JOIN_CLAUSE =
+            "INNER JOIN $PORTFOLIO_TABLE AS p ON v.id = p.usd_to_base_currency_rate_vehicle_id"
+
+        /* PAST PRICE QUERY CLAUSES */
+        private const val PAST_PRICE_SELECT_FROM_CLAUSE =
+            "SELECT pp.id, pp.date_time, pp.price, pp.is_closing, pp.vehicle_id FROM $PAST_PRICE_TABLE AS pp"
+
+        private const val PAST_PRICE_TO_VEHICLE_JOIN_CLAUSE = "INNER JOIN $VEHICLE_TABLE AS v ON pp.vehicle_id = v.id"
+
+        // FIXME: use is_closing
+
+        private const val PAST_PRICE_WHERE_CLAUSE =
+            "$PORTFOLIO_ID_PARAM_WHERE_CLAUSE " +
+            "AND DATETIME(pp.date_time) BETWEEN DATETIME(?) AND DATETIME(?) AND pp.date_time LIKE %?"
 
         /**
          * Builds a statement for inserting data into the database
@@ -374,17 +413,11 @@ class Database(val datasource: DataSource) {
      * @throws MissingPortfolioException If all the queried portfolio couldn't be found in the database
      */
     fun queryPortfolio(id: Int, interval: Interval): Portfolio {
-        val sql = """
-            SELECT id
-            FROM $PORTFOLIO_TABLE
-            WHERE id = ?
-        """.trimIndent()
-
         val investments = queryPortfolioInvestments(id, interval)
         val usdToBaseCurrencyRateVehicle = queryPortfolioUsdToBaseCurrencyRateVehicle(id, interval)
 
         return query(
-            sql,
+            PORTFOLIO_SELECT_STATEMENT,
             id,
             { rs -> buildPortfolio(rs, investments, usdToBaseCurrencyRateVehicle) },
             {
@@ -408,22 +441,9 @@ class Database(val datasource: DataSource) {
      * @throws MissingVehicleException If all the queried investments don't each have a corresponding vehicle
      */
     private fun queryPortfolioInvestments(portfolioId: Int, interval: Interval): List<Investment> {
-        val sql = """
-            SELECT
-                i.id AS id,
-                i.date_time AS date_time,
-                i.principal AS principal,
-                i.vehicle_id AS vehicle_id,
-                i.portfolio_id AS portfolio_id
-            FROM $INVESTMENT_TABLE as i
-            INNER JOIN $PORTFOLIO_TABLE as p
-                ON i.portfolio_id = p.id
-            WHERE p.id = ?
-            """.trimIndent()
-
         val investmentsVehicles = queryPortfolioInvestmentsVehicles(portfolioId, interval)
 
-        return query(sql, listOf(), setIdInPreparedStatement(portfolioId)) { rs ->
+        return query(INVESTMENT_SELECT_STATEMENT, listOf(), setIdInPreparedStatement(portfolioId)) { rs ->
             buildList(rs) {
                 val vehicleId = rs.getInt("vehicle_id")
 
@@ -446,15 +466,10 @@ class Database(val datasource: DataSource) {
      */
     private fun queryPortfolioUsdToBaseCurrencyRateVehicle(portfolioId: Int, interval: Interval): Vehicle {
         val sql = """
-            SELECT
-                v.id AS id,
-                v.symbol AS symbol,
-                v.name AS name
-            FROM $VEHICLE_TABLE AS v
-            INNER JOIN $PORTFOLIO_TABLE as p
-                ON v.id = p.usd_to_base_currency_rate_vehicle_id
-            WHERE p.id = ?
-            """.trimIndent()
+            $VEHICLE_SELECT_FROM_CLAUSE
+            $USD_TO_BASE_CURRENCY_RATE_VEHICLE_TO_PORTFOLIO_JOIN_CLAUSE
+            $PORTFOLIO_ID_PARAM_WHERE_CLAUSE
+        """.trimIndent()
 
         val pastPrices = queryPortfolioUsdToBaseCurrencyRateVehiclePastPrices(portfolioId, interval)
 
@@ -509,18 +524,11 @@ class Database(val datasource: DataSource) {
      */
     private fun queryPortfolioInvestmentsVehicles(portfolioId: Int, interval: Interval): Map<Int, Vehicle> {
         val sql = """
-            SELECT
-                v.id AS id,
-                v.symbol AS symbol,
-                v.name AS name,
-                i.id AS investment_id
-            FROM $VEHICLE_TABLE AS v
-            INNER JOIN $INVESTMENT_TABLE as i
-                ON v.id = i.vehicle_id
-            INNER JOIN $PORTFOLIO_TABLE as p
-                ON i.portfolio_id = p.id
-            WHERE p.id = ?
-            """.trimIndent()
+            $VEHICLE_SELECT_CLAUSE, i.id AS investment_id
+            $VEHICLE_FROM_CLAUSE
+            $VEHICLE_TO_INVESTMENT_TO_PORTFOLIO_JOIN_CLAUSE
+            $PORTFOLIO_ID_PARAM_WHERE_CLAUSE
+        """.trimIndent()
 
         val vehiclesPastPrices = queryPortfolioInvestmentsVehiclesPastPrices(portfolioId, interval)
 
@@ -550,24 +558,11 @@ class Database(val datasource: DataSource) {
         interval: Interval
     ): List<PastPrice> {
         val sql = """
-            SELECT
-                pp.id AS id,
-                pp.date_time AS date_time,
-                pp.price AS price,
-                pp.is_closing AS is_closing,
-                pp.vehicle_id AS vehicle_id
-            FROM $PAST_PRICE_TABLE AS pp
-            INNER JOIN $VEHICLE_TABLE AS v
-                ON pp.vehicle_id = v.id
-            INNER JOIN $PORTFOLIO_TABLE as p
-                ON v.id = p.usd_to_base_currency_rate_vehicle_id
-            WHERE
-                p.id = ?
-                AND DATETIME(pp.date_time) BETWEEN DATETIME(?) AND DATETIME(?)
-                AND pp.date_time LIKE %?
-            """.trimIndent()
-
-        // FIXME: verify the pp.date_time LIKE %? is correct
+            $PAST_PRICE_SELECT_FROM_CLAUSE
+            $PAST_PRICE_TO_VEHICLE_JOIN_CLAUSE
+            $USD_TO_BASE_CURRENCY_RATE_VEHICLE_TO_PORTFOLIO_JOIN_CLAUSE
+            $PAST_PRICE_WHERE_CLAUSE
+        """.trimIndent()
 
         return query(sql, listOf(), setPastPriceParametersInPreparedStatement(portfolioId, interval)) { rs ->
             buildList(rs) { buildPastPrice(rs) }
@@ -589,23 +584,10 @@ class Database(val datasource: DataSource) {
         interval: Interval
     ): Map<Int, List<PastPrice>> {
         val sql = """
-            SELECT
-                pp.id AS id,
-                pp.date_time AS date_time,
-                pp.price AS price,
-                pp.is_closing AS is_closing,
-                pp.vehicle_id AS vehicle_id
-            FROM $PAST_PRICE_TABLE AS pp
-            INNER JOIN $VEHICLE_TABLE AS v
-                ON pp.vehicle_id = v.id
-            INNER JOIN $INVESTMENT_TABLE as i
-                ON v.id = i.vehicle_id
-            INNER JOIN $PORTFOLIO_TABLE as p
-                ON i.portfolio_id = p.id
-            WHERE
-                p.id = ?
-                AND DATETIME(pp.date_time) BETWEEN DATETIME(?) AND DATETIME(?)
-                AND pp.date_time LIKE %?
+            $PAST_PRICE_SELECT_FROM_CLAUSE
+            $PAST_PRICE_TO_VEHICLE_JOIN_CLAUSE
+            $VEHICLE_TO_INVESTMENT_TO_PORTFOLIO_JOIN_CLAUSE
+            $PAST_PRICE_WHERE_CLAUSE
         """.trimIndent()
 
         // FIXME: verify the pp.date_time LIKE %? is correct
@@ -629,12 +611,11 @@ class Database(val datasource: DataSource) {
      */
     fun queryVehicles(query: String): List<Vehicle> {
         val sql = """
-            SELECT id, symbol, name
-            FROM $VEHICLE_TABLE
+            $VEHICLE_SELECT_FROM_CLAUSE
             WHERE
-                symbol LIKE %?%
-                OR name LIKE %?%
-            """.trimIndent()
+                v.symbol LIKE %?%
+                OR v.name LIKE %?%
+        """.trimIndent()
 
         return query(
             sql,
@@ -657,12 +638,8 @@ class Database(val datasource: DataSource) {
      */
     fun queryPastPrices(vehicleId: Int, interval: Interval): List<PastPrice> {
         val sql = """
-            SELECT id, date_time, price, is_closing, vehicle_id
-            FROM $PAST_PRICE_TABLE
-            WHERE
-                vehicle_id = ?
-                AND DATETIME(date_time) BETWEEN DATETIME(?) AND DATETIME(?)
-                AND date_time LIKE %?
+            $PAST_PRICE_SELECT_FROM_CLAUSE
+            $PAST_PRICE_WHERE_CLAUSE
         """.trimIndent()
 
         return query(sql, listOf(), setPastPriceParametersInPreparedStatement(vehicleId, interval)) { rs ->
