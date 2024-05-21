@@ -16,6 +16,7 @@ import javax.sql.DataSource
 // FIXME: more explicit errors
 // FIXME: refactor duplicate code in insert methods
 // FIXME: verify queries using "LIKE" are correct
+// FIXME: make sure this isn't vulnerable to sql injections
 
 /**
  * Thrown when a vehicle that should be in the database is not in the database
@@ -111,6 +112,10 @@ class Database(val datasource: DataSource) {
                 ON pp.vehicle_id = v.id
         """
 
+        private const val PAST_PRICE_BETWEEN_DATES_WHERE_CLAUSE_SECTION = """
+            DATETIME(pp.date_time) BETWEEN DATETIME(?) AND DATETIME(?)
+        """
+
         /**
          * Builds a statement for inserting data into the database
          *
@@ -125,7 +130,6 @@ class Database(val datasource: DataSource) {
             table: String,
             columnNames: Set<String>
         ): PreparedStatement {
-            // FIXME: make sure this isn't vulnerable to sql injections
             val columnNamesString = columnNames.joinToString(", ")
             val valuesPlaceholdersString = columnNames.joinToString(", ") { "?" }
             val sql = "INSERT INTO $table ($columnNamesString) VALUES ($valuesPlaceholdersString);"
@@ -137,16 +141,16 @@ class Database(val datasource: DataSource) {
          * round to; If it is a unit of time smaller than a day, queried past prices must round directly to it; If it
          * is a day or larger, queried past prices must be closing times and have only their relevant date sections
          * rounded
-         * @return Produces a where clause by which to query past prices, based on whether the given past prices belong
-         * to a portfolio with a specified id, are between two date times, and are rounded to the given timeGranularity
+         * @return Produces a section of a where clause that checks if a past price is rounded to the given
+         * timeGranularity
          * @throws IllegalArgumentException If the given timeGranularity isn't one of Interval's given granularities
          */
-        private fun buildPastPriceWhereClause(timeGranularity: String): String {
+        private fun buildPastPriceTimeGranularityWhereClauseSection(timeGranularity: String): String {
             val isClosing = "pp.is_closing = true"
             val dateTime = "pp.date_time"
             val date = "CONVERT(DATE, $dateTime)"
 
-            val granularityClause = when (timeGranularity) {
+            return when (timeGranularity) {
                 Interval.YEAR_GRANULARITY -> "$isClosing AND $date LIKE %-1-1"
                 Interval.MONTH_GRANULARITY -> "$isClosing AND $date LIKE %-1"
                 Interval.DAY_GRANULARITY -> isClosing
@@ -156,20 +160,22 @@ class Database(val datasource: DataSource) {
                     "Tried to query past prices with the invalid time granularity: $timeGranularity"
                 )
             }
-
-            return """
-                $PORTFOLIO_ID_PARAM_WHERE_CLAUSE
-                AND DATETIME(pp.date_time) BETWEEN DATETIME(?) AND DATETIME(?) 
-                AND $granularityClause
-            """.trimIndent()
         }
 
         /**
-         * @param sql The sql statement to prepare
-         * @return A function that prepares the given sql statement
+         * @param timeGranularity The smallest unit of time that past prices queried by the produced where clause will
+         * round to; If it is a unit of time smaller than a day, queried past prices must round directly to it; If it
+         * is a day or larger, queried past prices must be closing times and have only their relevant date sections
+         * rounded
+         * @return Produces a where clause by which to query past prices, based on whether the given past prices belong
+         * to a portfolio with a specified id, are between two date times, and are rounded to the given timeGranularity
+         * @throws IllegalArgumentException If the given timeGranularity isn't one of Interval's given granularities
          */
-        private fun prepareStatementClosure(sql: String): (Connection) -> PreparedStatement
-            = { con -> con.prepareStatement(sql) }
+        private fun buildPastPriceWhereClause(timeGranularity: String): String = """
+                $PORTFOLIO_ID_PARAM_WHERE_CLAUSE
+                AND $PAST_PRICE_BETWEEN_DATES_WHERE_CLAUSE_SECTION
+                AND ${buildPastPriceTimeGranularityWhereClauseSection(timeGranularity)}
+            """.trimIndent()
 
         /**
          * Sets an id in the given preparedStatement with the value of the given id
@@ -725,5 +731,81 @@ class Database(val datasource: DataSource) {
         default: T,
         setValuesClosure: (PreparedStatement) -> Unit,
         resultSetExtractor: (rs: ResultSet) -> T
-    ): T = jdbcTemplate.query(prepareStatementClosure(sql), setValuesClosure, resultSetExtractor) ?: default
+    ): T = jdbcTemplate.query({ con -> con.prepareStatement(sql) }, setValuesClosure, resultSetExtractor) ?: default
+
+    // TODO: implement "on delete cascade" for appropriate references
+
+    /**
+     * Deletes the row in the portfolios table that has the given id
+     *
+     * @param id The id of the row to delete
+     * @throws DataAccessException If the database was unable to perform the deletion
+     */
+    fun deletePortfolio(id: Int) { delete(PORTFOLIO_TABLE, id) }
+
+    /**
+     * Deletes the row in the investments table that has the given id
+     *
+     * @param id The id of the row to delete
+     * @throws DataAccessException If the database was unable to perform the deletion
+     */
+    fun deleteInvestment(id: Int) { delete(INVESTMENT_TABLE, id) }
+
+    /**
+     * Deletes the row in the vehicles table that has the given id
+     *
+     * @param id The id of the row to delete
+     * @throws DataAccessException If the database was unable to perform the deletion
+     */
+    fun deleteVehicle(id: Int) { delete(VEHICLE_TABLE, id) }
+
+    /**
+     * Deletes all past prices that are associated with the vehicle that has the given vehicleId, that are within the
+     * given interval
+     *
+     * @param vehicleId The unique identifier of a vehicle; all past prices that are associated with this vehicle are
+     * deleted
+     * @param interval All past prices that have dates within this interval are deleted, if those past prices have date
+     * times that don't round to the intervals time granularity
+     * @throws DataAccessException If the database was unable to perform the deletion
+     */
+    fun deletePastPrices(vehicleId: Int, interval: Interval) {
+        val timeGranularitySection = buildPastPriceTimeGranularityWhereClauseSection(interval.timeGranularity)
+
+        val sql = """
+            DELETE FROM $PAST_PRICE_TABLE AS pp
+            WHERE
+                pp.vehicle_id = ?
+                AND $PAST_PRICE_BETWEEN_DATES_WHERE_CLAUSE_SECTION
+                AND NOT($timeGranularitySection)
+        """.trimIndent()
+
+        val from = interval.from.toTimestamp()
+        val to = interval.to.toTimestamp()
+
+        jdbcTemplate.update(sql) { ps ->
+            ps.setInt(1, vehicleId)
+            ps.setString(2, from)
+            ps.setString(3, to)
+        }
+    }
+
+    /**
+     * Deletes the row in the given table that has the given id
+     *
+     * @param table The table to delete a row from
+     * @param id The id of the row to delete
+     * @throws DataAccessException If the database was unable to perform the deletion
+     */
+    private fun delete(table: String, id: Int) {
+        val sql = """
+            DELETE FROM ?
+            WHERE id = ?
+        """.trimIndent()
+
+        jdbcTemplate.update(sql) { ps ->
+            ps.setString(1, table)
+            ps.setInt(2, id)
+        }
+    }
 }
