@@ -484,12 +484,8 @@ class Database(val datasource: DataSource) {
             PORTFOLIO_SELECT_STATEMENT,
             id,
             { rs -> buildPortfolio(rs, investments, usdToBaseCurrencyRateVehicle) },
-            {
-                throw MissingPortfolioException("Query for a portfolio with the id: $id didn't produce any results")
-            },
-            {
-                throw MissingPortfolioException("Query for a portfolio with the id: $id produced more than one entry")
-            }
+            { throw MissingPortfolioException("Query for a portfolio with the id: $id didn't produce any results") },
+            { throw MissingPortfolioException("Query for a portfolio with the id: $id produced more than one entry") }
         )
     }
 
@@ -645,7 +641,7 @@ class Database(val datasource: DataSource) {
      * organized into sets which are mapped to the vehicle id that all past prices in the set correspond to
      * @throws DataAccessException If the database was unable to perform the query
      * @throws SQLException If the query didn't contain the correct data to create past prices
- */
+     */
     private fun queryPortfolioInvestmentsVehiclesPastPrices(
         portfolioId: Int,
         interval: Interval
