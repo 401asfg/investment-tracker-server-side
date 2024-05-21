@@ -45,39 +45,71 @@ class Database(val datasource: DataSource) {
         /* PORTFOLIO QUERY CLAUSES */
         private const val PORTFOLIO_ID_PARAM_WHERE_CLAUSE = "WHERE p.id = ?"
 
-        private const val PORTFOLIO_SELECT_STATEMENT =
-            "SELECT p.id FROM $PORTFOLIO_TABLE AS p $PORTFOLIO_ID_PARAM_WHERE_CLAUSE"
+        private const val PORTFOLIO_SELECT_STATEMENT = """
+            SELECT p.id
+            FROM $PORTFOLIO_TABLE AS p
+            $PORTFOLIO_ID_PARAM_WHERE_CLAUSE;
+        """
 
         /* INVESTMENT QUERY CLAUSES */
-        private const val INVESTMENT_TO_PORTFOLIO_JOIN_CLAUSE =
-            "INNER JOIN $PORTFOLIO_TABLE AS p ON i.portfolio_id = p.id"
+        private const val INVESTMENT_TO_PORTFOLIO_JOIN_CLAUSE = """
+            INNER JOIN $PORTFOLIO_TABLE AS p
+                ON i.portfolio_id = p.id
+        """
 
-        private const val INVESTMENT_SELECT_STATEMENT =
-            "SELECT i.id, i.date_time, i.principal, i.vehicle_id, i.portfolio_id FROM $INVESTMENT_TABLE AS i " +
-            "$INVESTMENT_TO_PORTFOLIO_JOIN_CLAUSE $PORTFOLIO_ID_PARAM_WHERE_CLAUSE"
+        private const val INVESTMENT_SELECT_STATEMENT = """
+            SELECT
+                i.id,
+                i.date_time,
+                i.principal,
+                i.vehicle_id,
+                i.portfolio_id
+            FROM $INVESTMENT_TABLE AS i
+            $INVESTMENT_TO_PORTFOLIO_JOIN_CLAUSE
+            $PORTFOLIO_ID_PARAM_WHERE_CLAUSE;
+        """
 
         /* VEHICLE QUERY CLAUSES */
-        private const val VEHICLE_SELECT_CLAUSE = "SELECT v.id, v.symbol, v.name"
+        private const val VEHICLE_SELECT_CLAUSE = """
+            SELECT
+                v.id,
+                v.symbol,
+                v.name
+        """
+
         private const val VEHICLE_FROM_CLAUSE = "FROM $VEHICLE_TABLE AS v"
-        private const val VEHICLE_SELECT_FROM_CLAUSE = "$VEHICLE_SELECT_CLAUSE $VEHICLE_FROM_CLAUSE"
 
-        private const val VEHICLE_TO_INVESTMENT_TO_PORTFOLIO_JOIN_CLAUSE =
-            "INNER JOIN $INVESTMENT_TABLE AS i ON v.id = i.vehicle_id $INVESTMENT_TO_PORTFOLIO_JOIN_CLAUSE"
+        private const val VEHICLE_SELECT_FROM_CLAUSE = """
+            $VEHICLE_SELECT_CLAUSE
+            $VEHICLE_FROM_CLAUSE
+        """
 
-        private const val USD_TO_BASE_CURRENCY_RATE_VEHICLE_TO_PORTFOLIO_JOIN_CLAUSE =
-            "INNER JOIN $PORTFOLIO_TABLE AS p ON v.id = p.usd_to_base_currency_rate_vehicle_id"
+        private const val VEHICLE_TO_INVESTMENT_TO_PORTFOLIO_JOIN_CLAUSE = """
+            INNER JOIN $INVESTMENT_TABLE AS i
+                ON v.id = i.vehicle_id
+            $INVESTMENT_TO_PORTFOLIO_JOIN_CLAUSE
+        """
+
+        private const val USD_TO_BASE_CURRENCY_RATE_VEHICLE_TO_PORTFOLIO_JOIN_CLAUSE = """
+            INNER JOIN $PORTFOLIO_TABLE AS p
+                ON v.id = p.usd_to_base_currency_rate_vehicle_id
+        """
 
         /* PAST PRICE QUERY CLAUSES */
-        private const val PAST_PRICE_SELECT_FROM_CLAUSE =
-            "SELECT pp.id, pp.date_time, pp.price, pp.is_closing, pp.vehicle_id FROM $PAST_PRICE_TABLE AS pp"
+        private const val PAST_PRICE_SELECT_FROM_CLAUSE = """
+            SELECT
+                pp.id,
+                pp.date_time,
+                pp.price,
+                pp.is_closing,
+                pp.vehicle_id
+            FROM $PAST_PRICE_TABLE AS pp
+        """
 
-        private const val PAST_PRICE_TO_VEHICLE_JOIN_CLAUSE = "INNER JOIN $VEHICLE_TABLE AS v ON pp.vehicle_id = v.id"
-
-        // FIXME: use is_closing
-
-        private const val PAST_PRICE_WHERE_CLAUSE =
-            "$PORTFOLIO_ID_PARAM_WHERE_CLAUSE " +
-            "AND DATETIME(pp.date_time) BETWEEN DATETIME(?) AND DATETIME(?) AND pp.date_time LIKE %?"
+        private const val PAST_PRICE_TO_VEHICLE_JOIN_CLAUSE = """
+            INNER JOIN $VEHICLE_TABLE AS v
+                ON pp.vehicle_id = v.id
+        """
 
         /**
          * Builds a statement for inserting data into the database
@@ -98,6 +130,38 @@ class Database(val datasource: DataSource) {
             val valuesPlaceholdersString = columnNames.joinToString(", ") { "?" }
             val sql = "INSERT INTO $table ($columnNamesString) VALUES ($valuesPlaceholdersString);"
             return connection.prepareStatement(sql, PreparedStatement.RETURN_GENERATED_KEYS)
+        }
+
+        /**
+         * @param timeGranularity The smallest unit of time that past prices queried by the produced where clause will
+         * round to; If it is a unit of time smaller than a day, queried past prices must round directly to it; If it
+         * is a day or larger, queried past prices must be closing times and have only their relevant date sections
+         * rounded
+         * @return Produces a where clause by which to query past prices, based on whether the given past prices belong
+         * to a portfolio with a specified id, are between two date times, and are rounded to the given timeGranularity
+         * @throws IllegalArgumentException If the given timeGranularity isn't one of Interval's given granularities
+         */
+        private fun buildPastPriceWhereClause(timeGranularity: String): String {
+            val isClosing = "pp.is_closing = true"
+            val dateTime = "pp.date_time"
+            val date = "CONVERT(DATE, $dateTime)"
+
+            val granularityClause = when (timeGranularity) {
+                Interval.YEAR_GRANULARITY -> "$isClosing AND $date LIKE %-1-1"
+                Interval.MONTH_GRANULARITY -> "$isClosing AND $date LIKE %-1"
+                Interval.DAY_GRANULARITY -> isClosing
+                Interval.HOUR_GRANULARITY -> "$dateTime LIKE %:00:00"
+                Interval.MINUTE_GRANULARITY -> "$dateTime LIKE %:00"
+                else -> throw IllegalArgumentException(
+                    "Tried to query past prices with the invalid time granularity: $timeGranularity"
+                )
+            }
+
+            return """
+                $PORTFOLIO_ID_PARAM_WHERE_CLAUSE
+                AND DATETIME(pp.date_time) BETWEEN DATETIME(?) AND DATETIME(?) 
+                AND $granularityClause
+            """.trimIndent()
         }
 
         /**
@@ -136,15 +200,11 @@ class Database(val datasource: DataSource) {
             = { ps ->
                 val fromDate = interval.from.toTimestamp()
                 val toDate = interval.to.toTimestamp()
-                val requiredTimestampEnd = interval.requiredTimestampEnd
 
                 setId(ps, id)
                 ps.setString(2, fromDate)
                 ps.setString(3, toDate)
-                ps.setString(4, requiredTimestampEnd)
             }
-
-        // FIXME: make sure build fns should take in maps and not just what they need
 
         /**
          * @param resultSet The data to build a portfolio from
@@ -398,8 +458,6 @@ class Database(val datasource: DataSource) {
         return keyHolder.key as Int
     }
 
-    // FIXME: refactor sql statements to use single point of control?
-
     /**
      * @param id The unique identifier of the portfolio
      * @param interval Only past prices, associated with the vehicles of the queried portfolio, that are included in
@@ -468,7 +526,7 @@ class Database(val datasource: DataSource) {
         val sql = """
             $VEHICLE_SELECT_FROM_CLAUSE
             $USD_TO_BASE_CURRENCY_RATE_VEHICLE_TO_PORTFOLIO_JOIN_CLAUSE
-            $PORTFOLIO_ID_PARAM_WHERE_CLAUSE
+            $PORTFOLIO_ID_PARAM_WHERE_CLAUSE;
         """.trimIndent()
 
         val pastPrices = queryPortfolioUsdToBaseCurrencyRateVehiclePastPrices(portfolioId, interval)
@@ -524,10 +582,11 @@ class Database(val datasource: DataSource) {
      */
     private fun queryPortfolioInvestmentsVehicles(portfolioId: Int, interval: Interval): Map<Int, Vehicle> {
         val sql = """
-            $VEHICLE_SELECT_CLAUSE, i.id AS investment_id
+            $VEHICLE_SELECT_CLAUSE,
+            i.id AS investment_id
             $VEHICLE_FROM_CLAUSE
             $VEHICLE_TO_INVESTMENT_TO_PORTFOLIO_JOIN_CLAUSE
-            $PORTFOLIO_ID_PARAM_WHERE_CLAUSE
+            $PORTFOLIO_ID_PARAM_WHERE_CLAUSE;
         """.trimIndent()
 
         val vehiclesPastPrices = queryPortfolioInvestmentsVehiclesPastPrices(portfolioId, interval)
@@ -557,11 +616,13 @@ class Database(val datasource: DataSource) {
         portfolioId: Int,
         interval: Interval
     ): List<PastPrice> {
+        val whereClause = buildPastPriceWhereClause(interval.timeGranularity)
+
         val sql = """
             $PAST_PRICE_SELECT_FROM_CLAUSE
             $PAST_PRICE_TO_VEHICLE_JOIN_CLAUSE
             $USD_TO_BASE_CURRENCY_RATE_VEHICLE_TO_PORTFOLIO_JOIN_CLAUSE
-            $PAST_PRICE_WHERE_CLAUSE
+            $whereClause;
         """.trimIndent()
 
         return query(sql, listOf(), setPastPriceParametersInPreparedStatement(portfolioId, interval)) { rs ->
@@ -583,14 +644,14 @@ class Database(val datasource: DataSource) {
         portfolioId: Int,
         interval: Interval
     ): Map<Int, List<PastPrice>> {
+        val whereClause = buildPastPriceWhereClause(interval.timeGranularity)
+
         val sql = """
             $PAST_PRICE_SELECT_FROM_CLAUSE
             $PAST_PRICE_TO_VEHICLE_JOIN_CLAUSE
             $VEHICLE_TO_INVESTMENT_TO_PORTFOLIO_JOIN_CLAUSE
-            $PAST_PRICE_WHERE_CLAUSE
+            $whereClause;
         """.trimIndent()
-
-        // FIXME: verify the pp.date_time LIKE %? is correct
 
         return query(sql, mapOf(), setPastPriceParametersInPreparedStatement(portfolioId, interval)) { rs ->
             buildIdMap<MutableList<PastPrice>>(rs) { map ->
@@ -614,7 +675,7 @@ class Database(val datasource: DataSource) {
             $VEHICLE_SELECT_FROM_CLAUSE
             WHERE
                 v.symbol LIKE %?%
-                OR v.name LIKE %?%
+                OR v.name LIKE %?%;
         """.trimIndent()
 
         return query(
@@ -637,9 +698,11 @@ class Database(val datasource: DataSource) {
      * @throws SQLException If the query didn't contain the correct data to create past prices
      */
     fun queryPastPrices(vehicleId: Int, interval: Interval): List<PastPrice> {
+        val whereClause = buildPastPriceWhereClause(interval.timeGranularity)
+
         val sql = """
             $PAST_PRICE_SELECT_FROM_CLAUSE
-            $PAST_PRICE_WHERE_CLAUSE
+            $whereClause;
         """.trimIndent()
 
         return query(sql, listOf(), setPastPriceParametersInPreparedStatement(vehicleId, interval)) { rs ->

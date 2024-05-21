@@ -34,7 +34,7 @@ data class DateTime(val year: Int, val month: Int, val day: Int, val hour: Int, 
  * @param timeGranularity The unit of time that a date time must be rounded to, to be included in this interval
  * @throws IllegalArgumentException If the given granularity isn't a valid unit of time
  */
-class Interval(val from: DateTime, val to: DateTime, timeGranularity: String = YEAR_GRANULARITY) {
+data class Interval(val from: DateTime, val to: DateTime, val timeGranularity: String = YEAR_GRANULARITY) {
     companion object {
         const val YEAR_GRANULARITY = "year"
         const val MONTH_GRANULARITY = "month"
@@ -43,12 +43,12 @@ class Interval(val from: DateTime, val to: DateTime, timeGranularity: String = Y
         const val MINUTE_GRANULARITY = "minute"
     }
 
-    val requiredTimestampEnd = when(timeGranularity) {
-        YEAR_GRANULARITY -> "-1-1 00:00:00"
-        MONTH_GRANULARITY -> "-1 00:00:00"
-        DAY_GRANULARITY -> " 00:00:00"
-        HOUR_GRANULARITY -> ":00:00"
-        MINUTE_GRANULARITY -> ":00"
-        else -> throw IllegalArgumentException("Interval received invalid granularity: $timeGranularity")
+    init {
+        if (timeGranularity != YEAR_GRANULARITY
+            && timeGranularity != MONTH_GRANULARITY
+            && timeGranularity != DAY_GRANULARITY
+            && timeGranularity != HOUR_GRANULARITY
+            && timeGranularity != MINUTE_GRANULARITY)
+            throw IllegalArgumentException("Interval received invalid granularity: $timeGranularity")
     }
 }
