@@ -1,4 +1,4 @@
-package com.michael.investmenttrackerserverside
+package com.michael.investmenttrackerserverside.services
 
 import Investment
 import PastPrice
@@ -10,6 +10,7 @@ import org.intellij.lang.annotations.Language
 import org.springframework.dao.DataAccessException
 import org.springframework.jdbc.core.*
 import org.springframework.jdbc.support.GeneratedKeyHolder
+import org.springframework.stereotype.Service
 import java.sql.*
 import javax.sql.DataSource
 
@@ -19,6 +20,10 @@ import javax.sql.DataSource
 // FIXME: verify queries using "LIKE" are correct
 // FIXME: make sure this isn't vulnerable to sql injections
 // FIXME: make sure all needed indexes are set up
+
+// IN SCHEMA
+// FIXME: make sure vehicle symbol is long enough
+// FIXME: make sure symbol and name of vehicle should be unique
 
 /**
  * Thrown when a vehicle that should be in the database is not in the database
@@ -35,8 +40,9 @@ class MissingPortfolioException(msg: String? = null) : Exception(msg)
  *
  * @param datasource The connection to the database
  */
+@Service
 class Database(val datasource: DataSource) {
-    private val jdbcTemplate = JdbcTemplate(datasource)
+    private val db = JdbcTemplate(datasource)
 
     companion object {
         /* TABLE NAMES */
@@ -44,10 +50,6 @@ class Database(val datasource: DataSource) {
         const val VEHICLE_TABLE = "vehicles"
         const val INVESTMENT_TABLE = "investments"
         const val PORTFOLIO_TABLE = "portfolios"
-
-        /* DATABASE PARAMETERS */
-        private const val VEHICLE_MAX_SYMBOL_LENGTH = 10
-        private const val VEHICLE_MAX_NAME_LENGTH = 10
 
         /* PORTFOLIO QUERY CLAUSES */
         private const val PORTFOLIO_ID_PARAM_WHERE_CLAUSE = "WHERE p.id = ?"
@@ -315,65 +317,6 @@ class Database(val datasource: DataSource) {
         }
     }
 
-    // FIXME: make sure vehicle symbol is long enough
-    // FIXME: make sure symbol and name of vehicle should be unique
-
-    /**
-     * Creates all the tables in the database
-     *
-     * @throws DataAccessException If any of the tables can't be created
-     */
-    fun createTables() {
-        jdbcTemplate.execute("""
-            CREATE TABLE $VEHICLE_TABLE (
-                id INT NOT NULL AUTO_INCREMENT,
-                symbol VARCHAR($VEHICLE_MAX_SYMBOL_LENGTH) NOT NULL,
-                `name` VARCHAR($VEHICLE_MAX_NAME_LENGTH) NOT NULL,
-                
-                PRIMARY KEY(id),
-                UNIQUE(symbol),
-                UNIQUE(`name`)
-            );
-            
-            CREATE TABLE $PAST_PRICE_TABLE (
-                id INT NOT NULL AUTO_INCREMENT,
-                date_time TIMESTAMP NOT NULL,
-                price FLOAT NOT NULL,
-                is_closing BIT NOT NULL,
-                vehicle_id INT NOT NULL,
-
-                PRIMARY KEY(id),
-                FOREIGN KEY(vehicle_id)
-                    REFERENCES $VEHICLE_TABLE(id)
-                    ON DELETE CASCADE
-            );
-            
-            CREATE TABLE $PORTFOLIO_TABLE (
-                id INT NOT NULL AUTO_INCREMENT,
-                usd_to_base_currency_rate_vehicle_id INT NOT NULL,
-
-                PRIMARY KEY(id),
-                FOREIGN KEY(usd_to_base_currency_rate_vehicle_id)
-                    REFERENCES $VEHICLE_TABLE(id)
-            );
-            
-            CREATE TABLE $INVESTMENT_TABLE (
-                id INT NOT NULL AUTO_INCREMENT,
-                date_time TIMESTAMP NOT NULL,
-                principal FLOAT NOT NULL,
-                vehicle_id INT NOT NULL,
-                portfolio_id INT NOT NULL,
-
-                PRIMARY KEY(id),
-                FOREIGN KEY(vehicle_id)
-                    REFERENCES $VEHICLE_TABLE(id),
-                FOREIGN KEY(portfolio_id)
-                    REFERENCES $PORTFOLIO_TABLE(id)
-                    ON DELETE CASCADE 
-            );
-        """.trimIndent())
-    }
-
     /**
      * Inserts the given portfolio and its investments into the database, without inserting the usd to base currency
      * rate vehicle
@@ -497,7 +440,7 @@ class Database(val datasource: DataSource) {
     ): List<Int> {
         val keyHolder = GeneratedKeyHolder()
 
-        jdbcTemplate.batchUpdate(
+        db.batchUpdate(
             { con -> buildInsertStatement(con, table, columnNames) },
             object: BatchPreparedStatementSetter {
                 override fun setValues(ps: PreparedStatement, i: Int) { setValues(ps, i) }
@@ -521,7 +464,7 @@ class Database(val datasource: DataSource) {
     private fun insert(table: String, columnNames: Set<String>, setValues: (PreparedStatement) -> Unit): Int {
         val keyHolder = GeneratedKeyHolder()
 
-        jdbcTemplate.update(
+        db.update(
             { con ->
                 val ps = buildInsertStatement(con, table, columnNames)
                 setValues(ps)
@@ -802,7 +745,7 @@ class Database(val datasource: DataSource) {
         default: T,
         setValuesClosure: (PreparedStatement) -> Unit,
         resultSetExtractor: (rs: ResultSet) -> T
-    ): T = jdbcTemplate.query({ con -> con.prepareStatement(sql) }, setValuesClosure, resultSetExtractor) ?: default
+    ): T = db.query({ con -> con.prepareStatement(sql) }, setValuesClosure, resultSetExtractor) ?: default
 
     // TODO: implement "on delete cascade" for appropriate references
 
@@ -856,7 +799,7 @@ class Database(val datasource: DataSource) {
         val from = interval.from.toTimestamp()
         val to = interval.to.toTimestamp()
 
-        jdbcTemplate.update(sql) { ps ->
+        db.update(sql) { ps ->
             ps.setInt(1, vehicleId)
             ps.setString(2, from)
             ps.setString(3, to)
@@ -876,7 +819,7 @@ class Database(val datasource: DataSource) {
             WHERE id = ?
         """.trimIndent()
 
-        jdbcTemplate.update(sql) { ps ->
+        db.update(sql) { ps ->
             ps.setString(1, table)
             ps.setInt(2, id)
         }
