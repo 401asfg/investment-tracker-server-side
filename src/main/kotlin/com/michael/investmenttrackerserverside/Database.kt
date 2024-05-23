@@ -6,6 +6,7 @@ import com.michael.investmenttrackerserverside.model.Interval
 import Portfolio
 import Vehicle
 import com.michael.investmenttrackerserverside.model.DateTime
+import org.intellij.lang.annotations.Language
 import org.springframework.dao.DataAccessException
 import org.springframework.jdbc.core.*
 import org.springframework.jdbc.support.GeneratedKeyHolder
@@ -17,6 +18,7 @@ import javax.sql.DataSource
 // FIXME: refactor duplicate code in insert methods
 // FIXME: verify queries using "LIKE" are correct
 // FIXME: make sure this isn't vulnerable to sql injections
+// FIXME: make sure all needed indexes are set up
 
 /**
  * Thrown when a vehicle that should be in the database is not in the database
@@ -43,9 +45,14 @@ class Database(val datasource: DataSource) {
         const val INVESTMENT_TABLE = "investments"
         const val PORTFOLIO_TABLE = "portfolios"
 
+        /* DATABASE PARAMETERS */
+        private const val VEHICLE_MAX_SYMBOL_LENGTH = 10
+        private const val VEHICLE_MAX_NAME_LENGTH = 10
+
         /* PORTFOLIO QUERY CLAUSES */
         private const val PORTFOLIO_ID_PARAM_WHERE_CLAUSE = "WHERE p.id = ?"
 
+        @Language("SQL")
         private const val PORTFOLIO_SELECT_STATEMENT = """
             SELECT p.id
             FROM $PORTFOLIO_TABLE AS p
@@ -58,6 +65,7 @@ class Database(val datasource: DataSource) {
                 ON i.portfolio_id = p.id
         """
 
+        @Language("SQL")
         private const val INVESTMENT_SELECT_STATEMENT = """
             SELECT
                 i.id,
@@ -85,6 +93,7 @@ class Database(val datasource: DataSource) {
             $VEHICLE_FROM_CLAUSE
         """
 
+        @Language("SQL")
         private const val VEHICLE_TO_INVESTMENT_TO_PORTFOLIO_JOIN_CLAUSE = """
             INNER JOIN $INVESTMENT_TABLE AS i
                 ON v.id = i.vehicle_id
@@ -171,6 +180,7 @@ class Database(val datasource: DataSource) {
          * to a portfolio with a specified id, are between two date times, and are rounded to the given timeGranularity
          * @throws IllegalArgumentException If the given timeGranularity isn't one of Interval's given granularities
          */
+        @Language("SQL")
         private fun buildPastPriceWhereClause(timeGranularity: String): String = """
                 $PORTFOLIO_ID_PARAM_WHERE_CLAUSE
                 AND $PAST_PRICE_BETWEEN_DATES_WHERE_CLAUSE_SECTION
@@ -303,6 +313,65 @@ class Database(val datasource: DataSource) {
             while (resultSet.next()) updateMap(map)
             return map
         }
+    }
+
+    // FIXME: make sure vehicle symbol is long enough
+    // FIXME: make sure symbol and name of vehicle should be unique
+
+    /**
+     * Creates all the tables in the database
+     *
+     * @throws DataAccessException If any of the tables can't be created
+     */
+    fun createTables() {
+        jdbcTemplate.execute("""
+            CREATE TABLE $VEHICLE_TABLE (
+                id INT NOT NULL AUTO_INCREMENT,
+                symbol VARCHAR($VEHICLE_MAX_SYMBOL_LENGTH) NOT NULL,
+                `name` VARCHAR($VEHICLE_MAX_NAME_LENGTH) NOT NULL,
+                
+                PRIMARY KEY(id),
+                UNIQUE(symbol),
+                UNIQUE(`name`)
+            );
+            
+            CREATE TABLE $PAST_PRICE_TABLE (
+                id INT NOT NULL AUTO_INCREMENT,
+                date_time TIMESTAMP NOT NULL,
+                price FLOAT NOT NULL,
+                is_closing BIT NOT NULL,
+                vehicle_id INT NOT NULL,
+
+                PRIMARY KEY(id),
+                FOREIGN KEY(vehicle_id)
+                    REFERENCES $VEHICLE_TABLE(id)
+                    ON DELETE CASCADE
+            );
+            
+            CREATE TABLE $PORTFOLIO_TABLE (
+                id INT NOT NULL AUTO_INCREMENT,
+                usd_to_base_currency_rate_vehicle_id INT NOT NULL,
+
+                PRIMARY KEY(id),
+                FOREIGN KEY(usd_to_base_currency_rate_vehicle_id)
+                    REFERENCES $VEHICLE_TABLE(id)
+            );
+            
+            CREATE TABLE $INVESTMENT_TABLE (
+                id INT NOT NULL AUTO_INCREMENT,
+                date_time TIMESTAMP NOT NULL,
+                principal FLOAT NOT NULL,
+                vehicle_id INT NOT NULL,
+                portfolio_id INT NOT NULL,
+
+                PRIMARY KEY(id),
+                FOREIGN KEY(vehicle_id)
+                    REFERENCES $VEHICLE_TABLE(id),
+                FOREIGN KEY(portfolio_id)
+                    REFERENCES $PORTFOLIO_TABLE(id)
+                    ON DELETE CASCADE 
+            );
+        """.trimIndent())
     }
 
     /**
@@ -525,6 +594,7 @@ class Database(val datasource: DataSource) {
      * @throws MissingVehicleException If the query results didn't contain exactly one vehicle
      */
     private fun queryPortfolioUsdToBaseCurrencyRateVehicle(portfolioId: Int, interval: Interval): Vehicle {
+        @Language("SQL")
         val sql = """
             $VEHICLE_SELECT_FROM_CLAUSE
             $USD_TO_BASE_CURRENCY_RATE_VEHICLE_TO_PORTFOLIO_JOIN_CLAUSE
@@ -583,6 +653,7 @@ class Database(val datasource: DataSource) {
      * @throws SQLException If the query didn't contain the correct data to create vehicles
      */
     private fun queryPortfolioInvestmentsVehicles(portfolioId: Int, interval: Interval): Map<Int, Vehicle> {
+        @Language("SQL")
         val sql = """
             $VEHICLE_SELECT_CLAUSE,
             i.id AS investment_id
@@ -620,6 +691,7 @@ class Database(val datasource: DataSource) {
     ): List<PastPrice> {
         val whereClause = buildPastPriceWhereClause(interval.timeGranularity)
 
+        @Language("SQL")
         val sql = """
             $PAST_PRICE_SELECT_FROM_CLAUSE
             $PAST_PRICE_TO_VEHICLE_JOIN_CLAUSE
@@ -648,6 +720,7 @@ class Database(val datasource: DataSource) {
     ): Map<Int, List<PastPrice>> {
         val whereClause = buildPastPriceWhereClause(interval.timeGranularity)
 
+        @Language("SQL")
         val sql = """
             $PAST_PRICE_SELECT_FROM_CLAUSE
             $PAST_PRICE_TO_VEHICLE_JOIN_CLAUSE
@@ -673,11 +746,12 @@ class Database(val datasource: DataSource) {
      * @throws SQLException If the query didn't contain the correct data to create vehicles
      */
     fun queryVehicles(query: String): List<Vehicle> {
+        @Language("SQL")
         val sql = """
             $VEHICLE_SELECT_FROM_CLAUSE
             WHERE
                 v.symbol LIKE %?%
-                OR v.name LIKE %?%;
+                OR v.`name` LIKE %?%;
         """.trimIndent()
 
         return query(
@@ -702,6 +776,7 @@ class Database(val datasource: DataSource) {
     fun queryPastPrices(vehicleId: Int, interval: Interval): List<PastPrice> {
         val whereClause = buildPastPriceWhereClause(interval.timeGranularity)
 
+        @Language("SQL")
         val sql = """
             $PAST_PRICE_SELECT_FROM_CLAUSE
             $whereClause;
@@ -746,6 +821,8 @@ class Database(val datasource: DataSource) {
      * @throws DataAccessException If the database was unable to perform the deletion
      */
     fun deleteInvestment(id: Int) { delete(INVESTMENT_TABLE, id) }
+
+    // FIXME: remove deleteVehicle to avoid null references in investments and portfolios?
 
     /**
      * Deletes the row in the vehicles table that has the given id
