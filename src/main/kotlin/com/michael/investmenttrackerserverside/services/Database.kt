@@ -95,7 +95,6 @@ class Database(val datasource: DataSource) {
             $VEHICLE_FROM_CLAUSE
         """
 
-        @Language("SQL")
         private const val VEHICLE_TO_INVESTMENT_TO_PORTFOLIO_JOIN_CLAUSE = """
             INNER JOIN $INVESTMENT_TABLE AS i
                 ON v.id = i.vehicle_id
@@ -279,9 +278,8 @@ class Database(val datasource: DataSource) {
             val price = resultSet.getFloat("price")
             val isClosing = resultSet.getBoolean("is_closing")
             val vehicleId = resultSet.getInt("is_vehicle_id")
-            val id = resultSet.getInt("id")
 
-            return PastPrice(dateTime, price, isClosing, vehicleId, id)
+            return PastPrice(dateTime, price, isClosing, vehicleId)
         }
 
         /**
@@ -406,7 +404,7 @@ class Database(val datasource: DataSource) {
      * @throws DataAccessException If the database was unable to perform the insertion
      */
     fun insert(pastPrices: List<PastPrice>) {
-        val ids = insert(
+        insert(
             PAST_PRICE_TABLE,
             setOf("date_time", "price", "is_closing", "vehicle_id"),
             pastPrices.size
@@ -418,8 +416,6 @@ class Database(val datasource: DataSource) {
             ps.setBoolean(3, pastPrice.isClosing)
             ps.setInt(4, pastPrice.vehicleId)
         }
-
-        pastPrices.forEachIndexed { i, pastPrice -> pastPrice.id = ids[i] }
     }
 
     /**

@@ -9,13 +9,11 @@ CREATE TABLE IF NOT EXISTS vehicles (
 );
 
 CREATE TABLE IF NOT EXISTS past_prices (
-    id INT NOT NULL AUTO_INCREMENT,
     date_time TIMESTAMP NOT NULL,
     price FLOAT NOT NULL,
     is_closing BIT NOT NULL,
     vehicle_id INT NOT NULL,
 
-    PRIMARY KEY (id),
     FOREIGN KEY (vehicle_id)
         REFERENCES vehicles (id)
         ON DELETE CASCADE

@@ -7,12 +7,10 @@ import com.michael.investmenttrackerserverside.model.DateTime
  * @param price The price of the vehicle at the given dateTime
  * @param isClosing Whether this past price was the closing price on its date
  * @param vehicleId The unique identifier of the vehicle this past price belongs to
- * @param id The unique identifier of this past price
  */
 data class PastPrice(
     val dateTime: DateTime,
     val price: Float,
     val isClosing: Boolean,
     val vehicleId: Int,
-    var id: Int? = null
 )
