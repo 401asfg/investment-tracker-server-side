@@ -705,25 +705,26 @@ class Database(val datasource: DataSource) {
     }
 
     /**
-     * @param vehicleId A unique identifier of a vehicle; only past prices associated with this vehicle are queried
+     * @param portfolioId A unique identifier of a portfolio; only past prices associated with this portfolio are
+     * queried
      * @param interval Only past prices that are included in this interval are queried
-     * @return All the past prices associated with the given vehicleId; only includes the past prices that are included
-     * in the given interval
+     * @return All the past prices associated with the given portfolioId; Only includes the past prices that are
+     * included in the given interval; Past prices are organized into sets that are each mapped to a different vehicle
+     * id
      * @throws DataAccessException If the database was unable to perform the query
      * @throws SQLException If the query didn't contain the correct data to create past prices
      */
-    fun queryPastPrices(vehicleId: Int, interval: Interval): List<PastPrice> {
-        val whereClause = buildPastPriceWhereClause(interval.timeGranularity)
+    fun queryPastPrices(portfolioId: Int, interval: Interval): Map<Int, List<PastPrice>> {
+        val pastPrices =
+            queryPortfolioInvestmentsVehiclesPastPrices(portfolioId, interval) as MutableMap<Int, List<PastPrice>>
 
-        @Language("SQL")
-        val sql = """
-            $PAST_PRICE_SELECT_FROM_CLAUSE
-            $whereClause;
-        """.trimIndent()
+        val currencyRateVehicle = queryPortfolioUsdToBaseCurrencyRateVehicle(portfolioId, interval)
 
-        return query(sql, listOf(), setPastPriceParametersInPreparedStatement(vehicleId, interval)) { rs ->
-            buildList(rs) { buildPastPrice(rs) }
-        }
+        val currencyRateVehicleId = currencyRateVehicle.id!!
+        val currencyRateVehiclePastPrices = currencyRateVehicle.pastPrices
+
+        pastPrices[currencyRateVehicleId] = currencyRateVehiclePastPrices
+        return pastPrices
     }
 
     /**
