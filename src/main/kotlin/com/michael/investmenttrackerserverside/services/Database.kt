@@ -5,6 +5,10 @@ import PastPrice
 import com.michael.investmenttrackerserverside.model.Interval
 import Portfolio
 import Vehicle
+import com.michael.investmenttrackerserverside.INVESTMENT_RESOURCE
+import com.michael.investmenttrackerserverside.PAST_PRICE_RESOURCE
+import com.michael.investmenttrackerserverside.PORTFOLIO_RESOURCE
+import com.michael.investmenttrackerserverside.VEHICLE_RESOURCE
 import com.michael.investmenttrackerserverside.model.DateTime
 import org.intellij.lang.annotations.Language
 import org.springframework.dao.DataAccessException
@@ -45,25 +49,19 @@ class Database(val datasource: DataSource) {
     private val db = JdbcTemplate(datasource)
 
     companion object {
-        /* TABLE NAMES */
-        const val PAST_PRICE_TABLE = "past_prices"
-        const val VEHICLE_TABLE = "vehicles"
-        const val INVESTMENT_TABLE = "investments"
-        const val PORTFOLIO_TABLE = "portfolios"
-
         /* PORTFOLIO QUERY CLAUSES */
         private const val PORTFOLIO_ID_PARAM_WHERE_CLAUSE = "WHERE p.id = ?"
 
         @Language("SQL")
         private const val PORTFOLIO_SELECT_STATEMENT = """
             SELECT p.id
-            FROM $PORTFOLIO_TABLE AS p
+            FROM $PORTFOLIO_RESOURCE AS p
             $PORTFOLIO_ID_PARAM_WHERE_CLAUSE;
         """
 
         /* INVESTMENT QUERY CLAUSES */
         private const val INVESTMENT_TO_PORTFOLIO_JOIN_CLAUSE = """
-            INNER JOIN $PORTFOLIO_TABLE AS p
+            INNER JOIN $PORTFOLIO_RESOURCE AS p
                 ON i.portfolio_id = p.id
         """
 
@@ -75,7 +73,7 @@ class Database(val datasource: DataSource) {
                 i.principal,
                 i.vehicle_id,
                 i.portfolio_id
-            FROM $INVESTMENT_TABLE AS i
+            FROM $INVESTMENT_RESOURCE AS i
             $INVESTMENT_TO_PORTFOLIO_JOIN_CLAUSE
             $PORTFOLIO_ID_PARAM_WHERE_CLAUSE;
         """
@@ -88,7 +86,7 @@ class Database(val datasource: DataSource) {
                 v.name
         """
 
-        private const val VEHICLE_FROM_CLAUSE = "FROM $VEHICLE_TABLE AS v"
+        private const val VEHICLE_FROM_CLAUSE = "FROM $VEHICLE_RESOURCE AS v"
 
         private const val VEHICLE_SELECT_FROM_CLAUSE = """
             $VEHICLE_SELECT_CLAUSE
@@ -96,13 +94,13 @@ class Database(val datasource: DataSource) {
         """
 
         private const val VEHICLE_TO_INVESTMENT_TO_PORTFOLIO_JOIN_CLAUSE = """
-            INNER JOIN $INVESTMENT_TABLE AS i
+            INNER JOIN $INVESTMENT_RESOURCE AS i
                 ON v.id = i.vehicle_id
             $INVESTMENT_TO_PORTFOLIO_JOIN_CLAUSE
         """
 
         private const val USD_TO_BASE_CURRENCY_RATE_VEHICLE_TO_PORTFOLIO_JOIN_CLAUSE = """
-            INNER JOIN $PORTFOLIO_TABLE AS p
+            INNER JOIN $PORTFOLIO_RESOURCE AS p
                 ON v.id = p.usd_to_base_currency_rate_vehicle_id
         """
 
@@ -114,11 +112,11 @@ class Database(val datasource: DataSource) {
                 pp.price,
                 pp.is_closing,
                 pp.vehicle_id
-            FROM $PAST_PRICE_TABLE AS pp
+            FROM $PAST_PRICE_RESOURCE AS pp
         """
 
         private const val PAST_PRICE_TO_VEHICLE_JOIN_CLAUSE = """
-            INNER JOIN $VEHICLE_TABLE AS v
+            INNER JOIN $VEHICLE_RESOURCE AS v
                 ON pp.vehicle_id = v.id
         """
 
@@ -330,7 +328,7 @@ class Database(val datasource: DataSource) {
         if (usdToBaseCurrencyRateVehicleId === null)
             throw MissingVehicleException("Portfolio's usd to base currency rate vehicle id is null")
 
-        val id = insert(PORTFOLIO_TABLE, setOf("usd_to_base_currency_rate_vehicle_id")) { ps ->
+        val id = insert(PORTFOLIO_RESOURCE, setOf("usd_to_base_currency_rate_vehicle_id")) { ps ->
             ps.setInt(1, usdToBaseCurrencyRateVehicleId)
         }
 
@@ -348,7 +346,7 @@ class Database(val datasource: DataSource) {
      */
     fun insert(investments: List<Investment>) {
         val ids = insert(
-            INVESTMENT_TABLE,
+            INVESTMENT_RESOURCE,
             setOf("date_time", "principal", "vehicle_id", "portfolio_id"),
             investments.size
         ) { ps: PreparedStatement, i: Int ->
@@ -376,7 +374,7 @@ class Database(val datasource: DataSource) {
      */
     fun insert(vehicles: List<Vehicle>) {
         val ids = insert(
-            VEHICLE_TABLE,
+            VEHICLE_RESOURCE,
             setOf("symbol", "name"),
             vehicles.size
         ) { ps: PreparedStatement, i: Int ->
@@ -405,7 +403,7 @@ class Database(val datasource: DataSource) {
      */
     fun insert(pastPrices: List<PastPrice>) {
         insert(
-            PAST_PRICE_TABLE,
+            PAST_PRICE_RESOURCE,
             setOf("date_time", "price", "is_closing", "vehicle_id"),
             pastPrices.size
         ) { ps: PreparedStatement, i: Int ->
@@ -705,6 +703,34 @@ class Database(val datasource: DataSource) {
     }
 
     /**
+     * @param symbol The symbol to find a vehicle with
+     * @return The vehicle with the given symbol; If there is no vehicle in the database with the given symbol,
+     * null
+     * @throws DataAccessException If the database was unable to perform the query
+     * @throws SQLException If the query didn't contain the correct data to create vehicles
+     */
+    fun queryVehicle(symbol: String): Vehicle? {
+        @Language("SQL")
+        val sql = """
+            $VEHICLE_SELECT_FROM_CLAUSE
+            WHERE v.symbol LIKE ?
+        """.trimIndent()
+
+        return query(
+            sql,
+            null,
+            { ps -> ps.setString(1, symbol) },
+            { rs ->
+                val sym = rs.getString("symbol")
+                val name = rs.getString("name")
+                val id = rs.getInt("id")
+
+                Vehicle(sym, name, listOf(), id)
+            }
+        )
+    }
+
+    /**
      * @param portfolioId A unique identifier of a portfolio; only past prices associated with this portfolio are
      * queried
      * @param interval Only past prices that are included in this interval are queried
@@ -752,7 +778,7 @@ class Database(val datasource: DataSource) {
      * @param id The id of the row to delete
      * @throws DataAccessException If the database was unable to perform the deletion
      */
-    fun deletePortfolio(id: Int) { delete(PORTFOLIO_TABLE, id) }
+    fun deletePortfolio(id: Int) { delete(PORTFOLIO_RESOURCE, id) }
 
     /**
      * Deletes the row in the investments table that has the given id
@@ -760,7 +786,7 @@ class Database(val datasource: DataSource) {
      * @param id The id of the row to delete
      * @throws DataAccessException If the database was unable to perform the deletion
      */
-    fun deleteInvestment(id: Int) { delete(INVESTMENT_TABLE, id) }
+    fun deleteInvestment(id: Int) { delete(INVESTMENT_RESOURCE, id) }
 
     // FIXME: remove deleteVehicle to avoid null references in investments and portfolios?
 
@@ -770,7 +796,7 @@ class Database(val datasource: DataSource) {
      * @param id The id of the row to delete
      * @throws DataAccessException If the database was unable to perform the deletion
      */
-    fun deleteVehicle(id: Int) { delete(VEHICLE_TABLE, id) }
+    fun deleteVehicle(id: Int) { delete(VEHICLE_RESOURCE, id) }
 
     /**
      * Deletes all past prices that are associated with the vehicle that has the given vehicleId, that are within the
@@ -786,7 +812,7 @@ class Database(val datasource: DataSource) {
         val timeGranularitySection = buildPastPriceTimeGranularityWhereClauseSection(interval.timeGranularity)
 
         val sql = """
-            DELETE FROM $PAST_PRICE_TABLE AS pp
+            DELETE FROM $PAST_PRICE_RESOURCE AS pp
             WHERE
                 pp.vehicle_id = ?
                 AND $PAST_PRICE_BETWEEN_DATES_WHERE_CLAUSE_SECTION
