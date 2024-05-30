@@ -16,7 +16,7 @@ class DataManager(val database: Database) {
      * TODO: write documentation
      */
     fun store(portfolio: Portfolio): Int {
-        database.insert(portfolio)
+        database.insert(portfolio) // FIXME: remove return id from store methods
         return portfolio.id!!
     }
 
