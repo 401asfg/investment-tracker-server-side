@@ -3,6 +3,7 @@ package com.michael.investmenttrackerserverside.controllers
 import Portfolio
 import Vehicle
 import com.michael.investmenttrackerserverside.PORTFOLIO_RESOURCE
+import com.michael.investmenttrackerserverside.services.DataManager
 import com.michael.investmenttrackerserverside.services.Database
 import com.michael.investmenttrackerserverside.services.QueryEngine
 import org.springframework.web.bind.annotation.*
@@ -12,7 +13,7 @@ import org.springframework.web.bind.annotation.*
  */
 @RestController
 @RequestMapping(PORTFOLIO_RESOURCE)
-class PortfolioController(private val queryEngine: QueryEngine, private val database: Database) {
+class PortfolioController(private val dataManager: DataManager) {
     /**
      * TODO: write documentation
      */
@@ -28,6 +29,6 @@ class PortfolioController(private val queryEngine: QueryEngine, private val data
     fun store(@RequestBody portfolio: Portfolio): Int {
         // FIXME: validate portfolio
         // FIXME: handle exceptions
-        return database.insert(portfolio)
+        return 0    // TODO: implement stub
     }
 }
