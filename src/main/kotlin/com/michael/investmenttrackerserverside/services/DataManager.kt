@@ -6,6 +6,8 @@ import Portfolio
 import Vehicle
 import com.michael.investmenttrackerserverside.model.Interval
 
+// FIXME: create interface for Database and DataManager that forces both to implement same query, insert, a delete methods
+
 /**
  * Used to store, show, and destroy data
  *
@@ -30,7 +32,7 @@ class DataManager(val database: Database) {
     /**
      * TODO: write documentation
      */
-    fun store(vehiclesPastPrices: Map<Int, List<PastPrice>>) { database.insert(vehiclesPastPrices) }
+    fun store(pastPrices: List<PastPrice>) { database.insert(pastPrices) }
 
     /**
      * TODO: write documentation
@@ -55,28 +57,20 @@ class DataManager(val database: Database) {
     /**
      * TODO: write documentation
      */
-    fun destroyPortfolio(id: Int) {
-        // TODO: implement stub
-    }
+    fun destroyPortfolio(id: Int) { database.deletePortfolio(id) }
 
     /**
      * TODO: write documentation
      */
-    fun destroyInvestment(id: Int) {
-        // TODO: implement stub
-    }
+    fun destroyInvestment(id: Int) { database.deleteInvestment(id) }
 
     /**
      * TODO: write documentation
      */
-    fun destroyVehicle(id: Int) {
-        // TODO: implement stub
-    }
+    fun destroyVehicle(id: Int) { database.deleteVehicle(id) }
 
     /**
      * TODO: write documentation
      */
-    fun destroyPastPrices(vehicleId: Int, interval: Interval) {
-        // TODO: implement stub
-    }
+    fun destroyPastPrices(vehicleId: Int, interval: Interval) { database.deletePastPrices(vehicleId, interval) }
 }
