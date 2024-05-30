@@ -314,8 +314,7 @@ class Database(val datasource: DataSource) {
     }
 
     /**
-     * Inserts the given portfolio and its investments into the database, without inserting the usd to base currency
-     * rate vehicle
+     * Inserts the given portfolio, without inserting its investments or usd to base currency rate vehicle
      * Assigns the portfolio the unique id of the database row that represents it
      *
      * @param portfolio The portfolio to insert
@@ -333,25 +332,18 @@ class Database(val datasource: DataSource) {
         }
 
         portfolio.id = id
-        insert(portfolio.investments)
     }
 
     /**
-     * Inserts the given investments into the database, without inserting its vehicle
-     * Assigns each investment the unique id of the database row that represents it
+     * Inserts the given investment into the database, without inserting its vehicle
+     * Assigns the investment the unique id of the database row that represents it
      *
-     * @param investments The investments to insert
+     * @param investment The investment to insert
      * @throws DataAccessException If the database was unable to perform the insertion
      * @throws MissingVehicleException If any of the investments' vehicle ids are null
      */
-    fun insert(investments: List<Investment>) {
-        val ids = insert(
-            INVESTMENT_RESOURCE,
-            setOf("date_time", "principal", "vehicle_id", "portfolio_id"),
-            investments.size
-        ) { ps: PreparedStatement, i: Int ->
-            val investment = investments[i]
-
+    fun insert(investment: Investment) {
+        val id = insert(INVESTMENT_RESOURCE, setOf("date_time", "principal", "vehicle_id", "portfolio_id")) { ps ->
             ps.setString(1, "DATETIME(${investment.dateTime.toTimestamp()})")
             ps.setFloat(2, investment.principal)
 
@@ -362,7 +354,7 @@ class Database(val datasource: DataSource) {
             ps.setInt(4, investment.portfolioId)
         }
 
-        investments.forEachIndexed { i, investment -> investment.id = ids[i] }
+        investment.id = id
     }
 
     /**

@@ -15,25 +15,22 @@ class DataManager(val database: Database) {
     /**
      * TODO: write documentation
      */
-    fun store(portfolio: Portfolio): Int {
-        database.insert(portfolio) // FIXME: remove return id from store methods
-        return portfolio.id!!
-    }
+    fun store(portfolio: Portfolio) { database.insert(portfolio) }
 
     /**
      * TODO: write documentation
      */
-    fun store(investment: Investment): Int = 0    // TODO: implement stub
+    fun store(investment: Investment) { database.insert(investment) }
 
     /**
      * TODO: write documentation
      */
-    fun store(vehicles: Set<Vehicle>): Int = 0    // TODO: implement stub
+    fun store(vehicles: List<Vehicle>) { database.insert(vehicles) }
 
     /**
      * TODO: write documentation
      */
-    fun store(vehiclesPastPrices: Map<Int, Set<PastPrice>>): Int = 0    // TODO: implement stub
+    fun store(vehiclesPastPrices: Map<Int, List<PastPrice>>) { database.insert(vehiclesPastPrices) }
 
     /**
      * TODO: write documentation
